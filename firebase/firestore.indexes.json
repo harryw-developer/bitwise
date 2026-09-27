@@ -1,0 +1,10 @@
+{
+  "indexes": [
+    { "collectionGroup": "attempts", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "finishedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "attempts", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "quizId", "order": "ASCENDING" }, { "fieldPath": "finishedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "results", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "quizId", "order": "ASCENDING" }, { "fieldPath": "finishedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "results", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "uid", "order": "ASCENDING" }, { "fieldPath": "finishedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "users", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "schoolId", "order": "ASCENDING" }, { "fieldPath": "displayName", "order": "ASCENDING" } ] }
+  ],
+  "fieldOverrides": []
+}

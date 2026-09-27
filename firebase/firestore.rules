@@ -1,0 +1,259 @@
+rules_version = '2';
+// Bitwise security rules (Firebase Spark plan: there is no server code, so these rules ARE the server).
+// Model: schools → teachers + school-managed students (the school directory); classes → members, tasks, notices, results.
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    // ---------- helpers ----------
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function me() { return get(/databases/$(db)/documents/users/$(uid())).data; }
+    function hasProfile() { return signedIn() && exists(/databases/$(db)/documents/users/$(uid())); }
+    function isTeacher() { return hasProfile() && me().role == 'teacher'; }
+    function classOf(cid) { return get(/databases/$(db)/documents/classes/$(cid)).data; }
+    function teaches(cid) { return signedIn() && exists(/databases/$(db)/documents/classes/$(cid)) && classOf(cid).teacherId == uid(); }
+    function memberOf(cid) { return signedIn() && exists(/databases/$(db)/documents/classes/$(cid)/members/$(uid())); }
+    function changes(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+    function str(v, max) { return v is string && v.size() > 0 && v.size() <= max; }
+    function colour(v) { return v is string && v.matches('^#[0-9A-Fa-f]{6}$'); }
+    function quizId(v) { return v is string && v.matches('^([a-z0-9]+[.][a-z0-9]+([.][0-3])?|daily[.][0-9]{4}-[0-9]{2}-[0-9]{2})$'); }
+    function platformAdmin() { return signedIn() && exists(/databases/$(db)/documents/platformAdmins/$(uid())); }
+
+    // ---------- schools and teacher join codes ----------
+    match /schools/{sid} {
+      allow read: if isTeacher() && me().schoolId == sid;
+      allow create: if signedIn() && request.resource.data.keys().hasOnly(['name', 'createdBy', 'createdAt', 'teacherCode'])
+        && request.resource.data.createdBy == uid() && str(request.resource.data.name, 80) && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(db)/documents/teacherCodes/$(request.resource.data.teacherCode)).data.schoolId == sid;
+      allow update: if signedIn() && resource.data.createdBy == uid() && changes(['name', 'teacherCode']) && str(request.resource.data.name, 80)
+        && getAfter(/databases/$(db)/documents/teacherCodes/$(request.resource.data.teacherCode)).data.schoolId == sid;
+    }
+    match /teacherCodes/{code} {
+      allow get: if signedIn();   // you can only look up a code you already know
+      allow list: if false;
+      allow create: if signedIn() && code.size() >= 10 && request.resource.data.keys().hasOnly(['schoolId'])
+        && getAfter(/databases/$(db)/documents/schools/$(request.resource.data.schoolId)).data.createdBy == uid();
+      allow delete: if signedIn() && get(/databases/$(db)/documents/schools/$(resource.data.schoolId)).data.createdBy == uid();
+    }
+
+    // ---------- people ----------
+    match /users/{userId} {
+      function p() { return resource.data; }
+      function n() { return request.resource.data; }
+      function freshScores() { return n().xp == 0 && n().weekXp == 0 && n().streak == 0 && n().bestStreak == 0 && n().lastDay == null; }
+      function baseFields() {
+        return n().keys().hasOnly(['role', 'displayName', 'avatarColor', 'schoolId', 'managed', 'username', 'createdBy', 'classIds', 'teacherCode',
+                                   'xp', 'weekXp', 'weekKey', 'streak', 'bestStreak', 'lastDay', 'lastAttempt', 'prefs', 'createdAt'])
+          && str(n().displayName, 40) && colour(n().avatarColor) && n().createdAt == request.time && n().classIds is list;
+      }
+      function joinsSchoolAsTeacher() {
+        return n().role == 'teacher' && n().schoolId is string && (
+          (n().get('teacherCode', '') != '' && exists(/databases/$(db)/documents/teacherCodes/$(n().get('teacherCode', 'x')))
+             && get(/databases/$(db)/documents/teacherCodes/$(n().get('teacherCode', 'x'))).data.schoolId == n().schoolId)
+          || (existsAfter(/databases/$(db)/documents/schools/$(n().schoolId)) && getAfter(/databases/$(db)/documents/schools/$(n().schoolId)).data.createdBy == uid()));
+      }
+      function sameSchoolTeacher() { return isTeacher() && p().schoolId != null && me().schoolId == p().schoolId; }
+      // a finished attempt is credited exactly once: it must go from open to done in this same write
+      function scoreUpdateOk() {
+        let a = getAfter(/databases/$(db)/documents/users/$(userId)/attempts/$(n().lastAttempt)).data;
+        let was = get(/databases/$(db)/documents/users/$(userId)/attempts/$(n().lastAttempt)).data;
+        let gain = a.xp;
+        let today = request.time.date();
+        let newStreak = p().lastDay != null && p().lastDay.date() == today ? p().streak
+                      : (p().lastDay != null && p().lastDay.date() == today - duration.value(1, 'd') ? p().streak + 1 : 1);
+        return changes(['xp', 'weekXp', 'weekKey', 'streak', 'bestStreak', 'lastDay', 'lastAttempt'])
+          && was.status == 'open' && a.status == 'done'
+          && n().xp == p().xp + gain
+          && n().weekKey is string && n().weekKey.size() <= 10
+          && (n().weekKey == p().weekKey ? n().weekXp == p().weekXp + gain : n().weekXp == gain)
+          && n().lastDay == request.time && n().streak == newStreak
+          && n().bestStreak == (newStreak > p().bestStreak ? newStreak : p().bestStreak);
+      }
+
+      allow get: if signedIn() && (userId == uid() || sameSchoolTeacher());
+      allow list: if isTeacher() && resource.data.schoolId == me().schoolId;     // the school directory
+      allow create: if signedIn() && baseFields() && freshScores() && (
+          // someone signing themselves up
+          (userId == uid() && n().managed == false && n().classIds.size() == 0 && (
+              (n().role == 'student' && n().schoolId == null) || joinsSchoolAsTeacher()))
+          // a teacher creating a school-managed student login
+          || (userId != uid() && isTeacher() && n().role == 'student' && n().managed == true && n().schoolId == me().schoolId
+              && n().createdBy == uid() && str(n().username, 40)));
+      allow update: if signedIn() && (
+          (userId == uid() && (
+              changes(['avatarColor', 'prefs'])
+              || (!p().managed && changes(['displayName', 'avatarColor', 'prefs']) && str(n().displayName, 40) && colour(n().avatarColor))
+              || (!p().managed && changes(['classIds']) && n().classIds is list && n().classIds.size() <= 20)
+              || (!p().managed && p().role == 'student' && changes(['role', 'schoolId', 'teacherCode']) && joinsSchoolAsTeacher())
+              || scoreUpdateOk()))
+          // teachers look after school-managed students: rename them and put them in classes
+          || (p().managed == true && sameSchoolTeacher() && changes(['displayName', 'avatarColor', 'classIds'])
+              && str(n().displayName, 40) && colour(n().avatarColor) && n().classIds.size() <= 20));
+      allow delete: if signedIn() && ((userId == uid() && !p().managed) || (p().managed == true && sameSchoolTeacher()));
+
+      match /attempts/{aid} {
+        function d() { return request.resource.data; }
+        function q() { return resource.data.quizId; }
+        function mult() {
+          return q().matches('.*[.]0$') ? 1.0 : q().matches('.*[.]1$') ? 1.2 : q().matches('.*[.]2$') ? 1.5 : q().matches('.*[.]3$') ? 2.0
+               : q().matches('.*[.]boss$') ? 1.8 : q().matches('^daily[.].*') ? 1.5 : q().matches('^code[.].*') ? 1.5 : 1.2;
+        }
+        function passed() { return d().correct * 5 >= d().total * 4; }
+        function baseXp() {
+          return math.round(d().correct * 10 * mult()) + (passed() ? math.round(20 * mult()) : 0)
+               + (d().maxCombo >= 3 ? (d().maxCombo > 20 ? 20 : d().maxCombo) * 2 : 0);
+        }
+        function dailyPath() { return /databases/$(db)/documents/users/$(userId)/daily/$(q()); }
+        function firstDaily() {
+          return q().matches('^daily[.].*') && !exists(dailyPath()) && existsAfter(dailyPath())
+            && resource.data.startedAt.date() >= timestamp.date(int(q()[6:10]), int(q()[11:13]), int(q()[14:16])) - duration.value(1, 'd')
+            && resource.data.startedAt.date() <= timestamp.date(int(q()[6:10]), int(q()[11:13]), int(q()[14:16])) + duration.value(1, 'd');
+        }
+        // coding challenges only pay out for beating your best score
+        function codeXpOk() {
+          let bp = exists(/databases/$(db)/documents/users/$(userId)/best/$(q())) ? get(/databases/$(db)/documents/users/$(userId)/best/$(q())).data.pct : 0.0;
+          let pct = float(d().correct) / float(d().total);
+          return pct > bp ? d().xp == math.round((pct - bp) * d().total * 10 * mult()) + (passed() && bp < 0.8 ? math.round(20 * mult()) : 0) : d().xp == 0;
+        }
+        allow read: if signedIn() && userId == uid();
+        allow create: if signedIn() && userId == uid() && d().keys().hasOnly(['quizId', 'assignmentId', 'classId', 'status', 'startedAt'])
+          && d().status == 'open' && d().startedAt == request.time && quizId(d().quizId);
+        allow update: if signedIn() && userId == uid() && resource.data.status == 'open'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'finishedAt', 'total', 'correct', 'pct', 'xp', 'maxCombo', 'activeMs', 'answers'])
+          && d().status == 'done' && d().finishedAt == request.time
+          && d().total is int && d().total >= 1 && d().total <= 40 && d().correct is int && d().correct >= 0 && d().correct <= d().total
+          && d().maxCombo is int && d().maxCombo >= 0 && d().maxCombo <= d().correct
+          && d().pct == float(d().correct) / float(d().total)
+          && d().activeMs is int && d().answers is list && d().answers.size() <= 150
+          && request.time > resource.data.startedAt + duration.value(d().total * 1500, 'ms')          // not impossibly fast
+          && request.time < resource.data.startedAt + duration.value(4, 'h')
+          && (q().matches('^code[.].*') ? codeXpOk() : (d().xp == baseXp() || (firstDaily() && d().xp == baseXp() + 30)));
+      }
+      match /best/{qid} {
+        function a() { return getAfter(/databases/$(db)/documents/users/$(userId)/attempts/$(request.resource.data.attempt)).data; }
+        function was() { return get(/databases/$(db)/documents/users/$(userId)/attempts/$(request.resource.data.attempt)).data; }
+        function oldPct() { return resource == null ? 0.0 : resource.data.pct; }
+        allow read: if signedIn() && userId == uid();
+        allow create, update: if signedIn() && userId == uid() && request.resource.data.keys().hasOnly(['pct', 'tries', 'lastAt', 'attempt'])
+          && was().status == 'open' && a().status == 'done' && a().quizId == qid
+          && request.resource.data.pct == (a().pct > oldPct() ? a().pct : oldPct())
+          && request.resource.data.tries == (resource == null ? 1 : resource.data.tries + 1) && request.resource.data.lastAt == request.time;
+      }
+      match /daily/{qid} {
+        allow read: if signedIn() && userId == uid();
+        allow create: if signedIn() && userId == uid() && request.resource.data.keys().hasOnly(['at']) && request.resource.data.at == request.time;
+      }
+      match /badges/{badge} {
+        allow read: if signedIn() && (userId == uid() || isTeacher());
+        allow create: if signedIn() && userId == uid() && request.resource.data.keys().hasOnly(['earnedAt']) && request.resource.data.earnedAt == request.time
+          && badge in ['first_steps', 'daily_done', 'perfect', 'combo_10', 'streak_3', 'streak_7', 'streak_30', 'gold_rush', 'platinum', 'boss_slayer',
+                       'binary_brain', 'logic_lord', 'speed_demon', 'xp_1000', 'xp_5000', 'quiz_25', 'first_program', 'code_10', 'on_time', 'all_rounder'];
+      }
+      match /reads/{nid} {   // which notices this person has read
+        allow read, delete: if signedIn() && userId == uid();
+        allow create: if signedIn() && userId == uid() && request.resource.data.keys().hasOnly(['at']);
+      }
+      match /{rest=**} {
+        allow delete: if signedIn() && userId == uid() && !get(/databases/$(db)/documents/users/$(userId)).data.managed;
+      }
+    }
+
+    // ---------- classes ----------
+    match /classes/{cid} {
+      function c() { return request.resource.data; }
+      allow get: if signedIn() && (resource.data.teacherId == uid() || memberOf(cid));
+      allow list: if signedIn() && resource.data.teacherId == uid();
+      allow create: if isTeacher() && c().keys().hasOnly(['name', 'schoolId', 'teacherId', 'joinCode', 'showLeaderboard', 'archived', 'createdAt'])
+        && c().teacherId == uid() && c().schoolId == me().schoolId && str(c().name, 60) && c().createdAt == request.time
+        && c().showLeaderboard is bool && c().archived == false
+        && getAfter(/databases/$(db)/documents/classCodes/$(c().joinCode)).data.classId == cid;
+      allow update: if signedIn() && resource.data.teacherId == uid() && changes(['name', 'showLeaderboard', 'archived', 'joinCode']) && str(c().name, 60)
+        && (c().joinCode == resource.data.joinCode || getAfter(/databases/$(db)/documents/classCodes/$(c().joinCode)).data.classId == cid);
+      allow delete: if signedIn() && resource.data.teacherId == uid();
+
+      match /members/{mid} {
+        function m() { return request.resource.data; }
+        function prof() { return getAfter(/databases/$(db)/documents/users/$(mid)).data; }
+        function statsOk() {
+          return changes(['displayName', 'avatarColor', 'xp', 'weekXp', 'weekKey', 'streak', 'lastDay', 'medals', 'quizzes', 'lastActive', 'stats', 'best', 'tries'])
+            && request.resource.data.get('stats', {}) is map && request.resource.data.get('best', {}) is map && request.resource.data.get('tries', {}) is map
+            && request.resource.data.get('best', {}).size() <= 400
+            && m().xp == prof().xp && m().weekXp == prof().weekXp && m().weekKey == prof().weekKey && m().streak == prof().streak
+            && m().lastDay == prof().lastDay && m().displayName == prof().displayName && m().avatarColor == prof().avatarColor
+            && m().medals is int && m().medals >= 0 && m().medals <= 400 && m().lastActive == request.time
+            && (m().quizzes == resource.data.quizzes || m().quizzes == resource.data.quizzes + 1);
+        }
+        function newMemberOk() {
+          return m().keys().hasOnly(['uid', 'displayName', 'avatarColor', 'managed', 'username', 'joinedAt', 'joinCode', 'xp', 'weekXp', 'weekKey',
+                                     'streak', 'lastDay', 'medals', 'quizzes', 'lastActive', 'stats', 'best', 'tries'])
+            && m().uid == mid && m().joinedAt == request.time && m().displayName == prof().displayName && m().managed == prof().managed
+            && m().xp == prof().xp && m().weekXp == prof().weekXp && m().weekKey == prof().weekKey && m().streak == prof().streak
+            && m().lastDay == prof().lastDay && m().avatarColor == prof().avatarColor
+            && m().medals is int && m().medals >= 0 && m().medals <= 400 && m().quizzes is int && m().quizzes >= 0 && m().quizzes <= 100000;
+        }
+        allow read: if signedIn() && (classOf(cid).teacherId == uid() || mid == uid() || (memberOf(cid) && classOf(cid).showLeaderboard == true));
+        allow create: if signedIn() && newMemberOk() && (
+            // a student joining with the class code (school-managed students are placed in classes by their teachers)
+            (mid == uid() && prof().managed == false && prof().role == 'student' && m().joinCode == classOf(cid).joinCode && classOf(cid).archived == false)
+            // a teacher adding a student from their school directory
+            || (teaches(cid) && prof().managed == true && prof().schoolId == classOf(cid).schoolId));
+        allow update: if signedIn() && ((mid == uid() && statsOk())
+            || (teaches(cid) && changes(['displayName', 'avatarColor']) && str(m().displayName, 40)));
+        allow delete: if signedIn() && (teaches(cid)
+            || (mid == uid() && !get(/databases/$(db)/documents/users/$(uid())).data.managed)
+            || (isTeacher() && get(/databases/$(db)/documents/users/$(mid)).data.managed == true && get(/databases/$(db)/documents/users/$(mid)).data.schoolId == me().schoolId));
+      }
+
+      match /tasks/{tid} {
+        function t() { return request.resource.data; }
+        function validTask() {
+          return t().keys().hasOnly(['title', 'instructions', 'quizIds', 'targetPct', 'dueAt', 'createdAt', 'createdBy'])
+            && str(t().title, 100) && t().instructions is string && t().instructions.size() <= 1000
+            && t().quizIds is list && t().quizIds.size() >= 1 && t().quizIds.size() <= 20
+            && t().targetPct is int && t().targetPct >= 0 && t().targetPct <= 100 && (t().dueAt == null || t().dueAt is timestamp);
+        }
+        allow read: if signedIn() && (teaches(cid) || memberOf(cid));
+        allow create: if teaches(cid) && validTask() && t().createdAt == request.time && t().createdBy == uid();
+        allow update: if teaches(cid) && validTask() && t().createdAt == resource.data.createdAt;
+        allow delete: if teaches(cid);
+      }
+
+      match /notices/{nid} {
+        function x() { return request.resource.data; }
+        allow read: if signedIn() && (teaches(cid) || memberOf(cid));
+        allow create: if teaches(cid) && x().keys().hasOnly(['title', 'body', 'authorId', 'authorName', 'createdAt', 'pinned', 'groupId', 'className'])
+          && str(x().title, 120) && x().body is string && x().body.size() <= 4000 && x().authorId == uid() && x().createdAt == request.time && x().pinned is bool;
+        allow update: if teaches(cid) && changes(['pinned', 'title', 'body']);
+        allow delete: if teaches(cid);
+      }
+
+      // copies of finished attempts, so teachers can analyse them (written by the student, must match their real attempt)
+      match /results/{aid} {
+        function r() { return request.resource.data; }
+        function a() { return get(/databases/$(db)/documents/users/$(uid())/attempts/$(aid)).data; }
+        allow read: if signedIn() && (classOf(cid).teacherId == uid() || resource.data.uid == uid());
+        allow create: if signedIn() && memberOf(cid) && r().uid == uid() && a().status == 'done'
+          && r().keys().hasOnly(['uid', 'displayName', 'quizId', 'assignmentId', 'total', 'correct', 'pct', 'xp', 'activeMs', 'finishedAt', 'answers'])
+          && r().quizId == a().quizId && r().assignmentId == a().assignmentId && r().total == a().total && r().correct == a().correct && r().pct == a().pct && r().xp == a().xp
+          && r().activeMs == a().activeMs && r().finishedAt == a().finishedAt && r().answers == a().answers;
+        allow delete: if signedIn() && (resource.data.uid == uid() || classOf(cid).teacherId == uid());
+      }
+    }
+    match /classCodes/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if isTeacher() && request.resource.data.keys().hasOnly(['classId'])
+        && getAfter(/databases/$(db)/documents/classes/$(request.resource.data.classId)).data.teacherId == uid();
+      allow delete: if signedIn() && get(/databases/$(db)/documents/classes/$(resource.data.classId)).data.teacherId == uid();
+    }
+
+    // ---------- teacher-only reference data ----------
+    match /codeSolutions/{id} {
+      allow read: if isTeacher();
+      allow write: if platformAdmin();
+    }
+    match /platformAdmins/{id} {
+      allow read, write: if false;   // managed from the Firebase console only
+    }
+  }
+}

@@ -18,10 +18,7 @@ BW.csv = (name, rows) => {
 BW.copy = async text => { try { await navigator.clipboard.writeText(text); BW.toast("Copied"); } catch (e) { BW.toast("Copy didn't work. Select the text instead."); } };
 
 BW.viewTeach = () => {
-  const cls = BW.myClasses(), dash = BW.fetchOnce("tdash", async () => {
-    const [m, a] = await Promise.all([BW.api.sel(BW.sb.from("class_members").select("class_id,student_id")), BW.api.sel(BW.sb.from("assignments").select("id,class_id,due_at"))]);
-    return { m, a };
-  });
+  const cls = BW.myClasses(), dash = BW.fetchOnce("tdash", () => BW.db.dashboard());
   const count = (arr, id) => dash ? arr.filter(x => x.class_id === id).length : "…";
   const live = cls.filter(c => !c.archived), archived = cls.filter(c => c.archived);
   const dueSoon = dash ? dash.a.filter(a => a.due_at && new Date(a.due_at) > Date.now() && new Date(a.due_at) - Date.now() < 7 * 864e5).length : "…";
@@ -29,7 +26,8 @@ BW.viewTeach = () => {
     <div class="cc-body"><h3>${E(c.name)}</h3><p class="muted num">${count(dash?.m || [], c.id)} students · ${count(dash?.a || [], c.id)} tasks</p></div><button class="go-dark" data-class="${c.id}" aria-label="Open ${E(c.name)}">${I.arrow}</button></article>`;
   return `<header class="hello"><div><h1>Hello, ${E(BW.myName())}</h1><p class="sub">Teacher dashboard</p></div><button class="avatar-btn" data-nav="profile" aria-label="Your profile">${BW.avatarHTML()}</button></header>
   <div class="stat-row wide" style="margin-top:22px"><div class="stat card"><b class="num">${live.length}</b><span>Classes</span></div><div class="stat card"><b class="num">${dash ? new Set(dash.m.filter(x => live.some(c => c.id === x.class_id)).map(x => x.student_id)).size : "…"}</b><span>Students</span></div><div class="stat card"><b class="num">${dash ? dash.a.length : "…"}</b><span>Tasks set</span></div><div class="stat card"><b class="num">${dueSoon}</b><span>Due this week</span></div></div>
-  <section class="panel" style="margin-top:18px"><h3>Create a class</h3><form class="nick" id="newClass"><input id="newClassName" maxlength="60" placeholder="e.g. 10X Computer Science" aria-label="Class name" required><button class="small-btn">Create class</button></form><p class="note">Each class gets a join code. Students can join with it, or you can create logins for them.</p></section>
+  ${live.length ? `<div class="row-btns" style="margin-top:18px"><button class="cta ghost" data-act="compose">${I.mail.replace("<svg", '<svg width="20" height="20"')}Send a notice to students</button><button class="cta ghost" data-nav="directory">${I.school.replace("<svg", '<svg width="20" height="20"')}School directory</button></div>` : ""}
+  <section class="panel" style="margin-top:18px"><h3>Create a class</h3><form class="nick" id="newClass"><input id="newClassName" maxlength="60" placeholder="e.g. 10X Computer Science" aria-label="Class name" required><button class="small-btn">Create class</button></form><p class="note">Each class gets a join code. Students can join with it, or you can create school logins for them and add them to as many classes as you like.</p></section>
   ${BW.teachSearchHTML()}
   <div class="sec-head"><h2>Your classes</h2><button class="link" data-nav="topics">Browse the quizzes</button></div>
   ${live.length ? `<div class="class-grid">${live.map(card).join("")}</div>` : `<div class="empty">Create your first class above.</div>`}
@@ -37,6 +35,7 @@ BW.viewTeach = () => {
 };
 BW.bindTeach = root => {
   BW.bindTeachSearch(root);
+  root.querySelector("[data-act=compose]")?.addEventListener("click", () => BW.composeNotice());
   root.querySelector("#newClass").onsubmit = async e => { e.preventDefault(); const name = root.querySelector("#newClassName").value.trim(); if (!name) return;
     try { const c = await BW.api.rpc("create_class", { p_name: name }); BW.S.classes.push(c); BW.invalidate("tdash"); BW.toast(`Created ${c.name}`); BW.go("class", { cid: c.id }); } catch (err) { BW.toast(BW.errMsg(err)); } };
 };
@@ -45,8 +44,8 @@ BW.bindTeach = root => {
 BW.viewClass = ({ cid }) => {
   const c = BW.classById(cid); if (!c) return `<div class="empty">Class not found.</div>`;
   const tab = BW.ui.classTab || "tasks";
-  const tabs = [["tasks", "Tasks"], ["students", "Students"], ["insights", "Insights"], ["board", "Leaderboard"], ["settings", "Settings"]];
-  const body = { tasks: BW.classTasks, students: BW.classStudents, insights: BW.classInsights, board: BW.classBoard, settings: BW.classSettings }[tab](c);
+  const tabs = [["tasks", "Tasks"], ["students", "Students"], ["notices", "Notices"], ["insights", "Insights"], ["board", "Leaderboard"], ["settings", "Settings"]];
+  const body = { tasks: BW.classTasks, students: BW.classStudents, notices: BW.classNoticesTab, insights: BW.classInsights, board: BW.classBoard, settings: BW.classSettings }[tab](c);
   return `<div class="class-hero" style="background-image:${BW.classCover(c)}"><button class="back" data-back aria-label="Back">${I.back}</button>
     <div class="ch-info"><h1>${E(c.name)}</h1><div class="joincode"><small>Join code</small><b class="mono">${E(c.join_code)}</b><button class="glass" data-copy="${E(c.join_code)}">Copy</button><button class="glass" data-act="newcode">New code</button></div></div></div>
   <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button class="tab ${tab === k ? "on" : ""}" data-ctab="${k}" role="tab" aria-selected="${tab === k}">${l}</button>`).join("")}</div>
@@ -54,7 +53,7 @@ BW.viewClass = ({ cid }) => {
 };
 
 BW.classTasks = c => {
-  const list = BW.fetchOnce("assign:" + c.id, () => BW.api.sel(BW.sb.from("assignments").select("*").eq("class_id", c.id).order("created_at", { ascending: false })));
+  const list = BW.fetchOnce("assign:" + c.id, () => BW.db.tasks(c.id));
   const sum = BW.fetchOnce("asum:" + c.id, () => BW.api.rpc("class_assignment_summary", { p_class: c.id }));
   const head = `<div class="row-btns" style="margin-bottom:18px"><button class="cta" data-act="openlib">${BW.icon.folder.replace("<svg", '<svg width="20" height="20"')}Set homework from the Task Library</button></div>`;
   if (list === undefined) return head + BW.loading;

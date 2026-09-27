@@ -57,19 +57,18 @@ BW.answersHTML = rows => {
       <td class="r num"><span class="tbar"><i style="width:${Math.max(4, r.ms / max * 100)}%"></i></span>${BW.fmtMs(r.ms)}</td></tr>`).join("")}
     </tbody></table></div>`;
 };
-BW.answersFor = attemptId => BW.fetchOnce("ans:" + attemptId, () => BW.api.sel(BW.sb.from("attempt_answers").select("*").eq("attempt_id", attemptId).order("seq")));
 BW.attemptList = (atts, openId) => atts.map(t => { const lab = BW.quizLabel(t.quiz_id), open = openId === t.id;
   return `<div class="att ${open ? "open" : ""}"><button class="att-head" data-att="${t.id}" aria-expanded="${open}"><span class="tt"><b>${E(lab.title)}</b><small class="muted">${E(lab.sub || "")} · ${BW.when(t.finished_at)}</small></span>
     <span class="num att-score ${+t.pct >= BW.PASS ? "good-t" : ""}">${BW.pct(t.pct)}</span><span class="num muted">${t.correct}/${t.total}</span><span class="num muted">${t.active_ms != null ? BW.fmtMs(t.active_ms) : "–"}</span>${I.down}</button>
-    ${open ? `<div class="att-body">${BW.answersHTML(BW.answersFor(t.id))}</div>` : ""}</div>`; }).join("");
+    ${open ? `<div class="att-body">${BW.answersHTML(t.answers || [])}</div>` : ""}</div>`; }).join("");
 
 /* ---------- one task's report ---------- */
 BW.itemChip = (it, target) => { const l = BW.itemLabel(it.quiz_id), done = !!it.completed_at, st = done ? "good" : +it.tries ? "" : "muted";
   return `<span class="item-chip ${st}" title="${E(l.name)}"><span class="ex-ico xs">${l.icon}</span>${E(l.name)}<b class="num">${it.best != null ? BW.pct(it.best) : "–"}</b></span>`; };
 BW.viewAssignment = ({ aid, cid }) => {
-  const list = BW.fetchOnce("assign:" + cid, () => BW.api.sel(BW.sb.from("assignments").select("*").eq("class_id", cid).order("created_at", { ascending: false })));
-  const rep = BW.fetchOnce("rep:" + aid, () => BW.api.rpc("assignment_report", { p_assignment: aid }));
-  const qs = BW.fetchOnce("qstats:" + aid, () => BW.api.rpc("assignment_question_stats", { p_assignment: aid }));
+  const list = BW.fetchOnce("assign:" + cid, () => BW.db.tasks(cid));
+  const rep = BW.fetchOnce("rep:" + aid, () => BW.api.rpc("assignment_report", { p_class: cid, p_assignment: aid }));
+  const qs = BW.fetchOnce("qstats:" + aid, () => BW.api.rpc("assignment_question_stats", { p_class: cid, p_assignment: aid }));
   const a = list?.find(x => x.id === aid), c = BW.classById(cid);
   if (list === undefined || rep === undefined) return BW.loading;
   if (!a) return `<div class="empty">That task was deleted.</div>`;
@@ -78,7 +77,7 @@ BW.viewAssignment = ({ aid, cid }) => {
   const done = rows.filter(r => r.completed_at).length, started = rows.filter(r => r.tries > 0), avg = started.length ? Math.round(started.reduce((s, r) => s + +r.best, 0) / started.length * 100) : 0;
   const itemsDoneAvg = rows.length ? rows.reduce((s, r) => s + r.items_done, 0) / rows.length : 0;
   const openS = BW.ui.openStudent;
-  const studentAtts = sid => BW.fetchOnce(`satt:${aid}:${sid}`, () => BW.api.sel(BW.sb.from("attempts").select("id,quiz_id,pct,correct,total,active_ms,finished_at").eq("user_id", sid).in("quiz_id", a.quiz_ids).eq("status", "done").gte("finished_at", a.created_at).order("finished_at", { ascending: false }).limit(40)));
+  const studentAtts = sid => (rows.find(r => r.student_id === sid)?.items || []).flatMap(i => i.results || []).sort((x, y) => (y.finished_at || "").localeCompare(x.finished_at || "")).slice(0, 40);
   const qsHTML = qs === undefined ? BW.loading : !qs?.length ? `<p class="note">The breakdown appears once students have answered.</p>` :
     `<div class="table-wrap"><table class="dtable"><thead><tr><th>Question</th><th>Type</th><th class="r">Students</th><th>Right first time</th><th class="r">Avg time</th><th class="r">Avg tries</th><th>Most common wrong answer</th></tr></thead><tbody>
     ${qs.map(q => `<tr><td class="qcell"><div class="clamp" title="${E(q.sample)}">${E(BW.qLabel(q.q_key, q.sample))}</div><small class="muted">${E(q.topic)}</small></td><td>${E(BW.TYPE_LABELS[q.q_type] || q.q_type)}</td><td class="r num">${q.students}</td>
@@ -110,34 +109,32 @@ BW.bindAssignment = (root, { aid, cid }) => {
   root.querySelector("[data-act=anscsv]")?.addEventListener("click", async () => {
     const task = a(), people = Object.fromEntries((BW.cache["rep:" + aid].data || []).map(r => [r.student_id, r.display_name]));
     try {
-      const atts = await BW.api.sel(BW.sb.from("attempts").select("id,user_id,quiz_id,finished_at,pct").in("quiz_id", task.quiz_ids).eq("status", "done").gte("finished_at", task.created_at).in("user_id", Object.keys(people)).limit(2000));
-      const ans = atts.length ? await BW.api.sel(BW.sb.from("attempt_answers").select("attempt_id,seq,q_code,q_type,q_text,topic,answer,correct_answer,is_correct,try_no,ms").in("attempt_id", atts.map(x => x.id)).order("seq").limit(10000)) : [];
-      const byAtt = Object.fromEntries(atts.map(x => [x.id, x]));
+      const atts = (await BW.db.results(cid, task.quiz_ids)).filter(t => people[t.uid] && t.finished_at >= (task.created_at || ""));
       BW.csv(`${safe(task.title)}_answers.csv`, [["Student", "Item", "Attempt finished", "Attempt score %", "Question code", "Type", "Topic", "Question", "Answer given", "Correct answer", "Correct", "Try", "Seconds"],
-        ...ans.map(r => { const t = byAtt[r.attempt_id]; return [people[t.user_id], BW.itemLabel(t.quiz_id).name, t.finished_at, Math.round(t.pct * 100), r.q_code, BW.TYPE_LABELS[r.q_type] || r.q_type, r.topic, r.q_text, r.answer, r.correct_answer, r.is_correct ? "Yes" : "No", r.try_no, (r.ms / 1000).toFixed(1)]; })]);
+        ...atts.flatMap(t => t.answers.map(r => [people[t.uid], BW.itemLabel(t.quiz_id).name, t.finished_at, Math.round(t.pct * 100), r.q_code, BW.TYPE_LABELS[r.q_type] || r.q_type, r.topic, r.q_text, r.answer, r.correct_answer, r.is_correct ? "Yes" : "No", r.try_no, (r.ms / 1000).toFixed(1)]))]);
     } catch (e) { BW.toast(BW.errMsg(e)); }
   });
   root.querySelector("[data-act=deltask]")?.addEventListener("click", () => BW.modal(`<h2>Delete this task?</h2><p class="muted" style="margin:8px 0 18px">Students' scores and answers stay; the task disappears from their list.</p><div class="row-btns"><button class="cta ghost" data-close>Cancel</button><button class="cta danger" id="yesDel">Delete</button></div>`,
-    (w, close) => w.querySelector("#yesDel").onclick = async () => { const { error } = await BW.sb.from("assignments").delete().eq("id", aid); close(); if (error) return BW.toast(BW.errMsg(error)); BW.invalidate("assign:" + cid, "asum:" + cid, "rep:" + aid, "qstats:" + aid, "tdash", "myassign"); BW.toast("Task deleted"); BW.back(); }));
+    (w, close) => w.querySelector("#yesDel").onclick = async () => { try { await BW.db.deleteTask(cid, aid); } catch (e) { close(); return BW.toast(BW.errMsg(e)); } close(); BW.invalidate("assign:" + cid, "asum:" + cid, "rep:" + aid, "qstats:" + aid, "tdash"); BW.toast("Task deleted"); BW.back(); }));
 };
 
 /* ---------- students tab with effort + accuracy ---------- */
 BW.classStudents = c => {
   const roster = BW.fetchOnce("roster:" + c.id, () => BW.api.rpc("class_roster", { p_class: c.id }));
   const stats = BW.fetchOnce("sstats:" + c.id, () => BW.api.rpc("class_student_stats", { p_class: c.id }));
-  const head = `<div class="row-btns" style="margin-bottom:12px"><button class="cta" data-act="addstudents">Create student logins</button><button class="cta ghost" data-act="rostercsv" ${roster?.length ? "" : "disabled"}>Export CSV</button></div>
-    <p class="note" style="margin-bottom:16px">Students with their own email can sign up and join with code <b class="mono">${E(c.join_code)}</b>. Select a name to see every answer they've given.</p>`;
+  const head = `<div class="row-btns" style="margin-bottom:12px"><button class="cta" data-act="fromdir">${BW.icon.school.replace("<svg", '<svg width="20" height="20"')}Add from school directory</button><button class="cta ghost" data-act="addstudents">Create student logins</button><button class="cta ghost" data-act="rostercsv" ${roster?.length ? "" : "disabled"}>Export CSV</button></div>
+    <p class="note" style="margin-bottom:16px">Students with their own email can sign up and join with code <b class="mono">${E(c.join_code)}</b>. School logins can be in as many classes as you like. Select a name to see every answer they've given.</p>`;
   if (roster === undefined) return head + BW.loading;
   if (!roster) return head + `<div class="empty">${E(BW.cacheErr("roster:" + c.id))}</div>`;
   const S = Object.fromEntries((stats || []).map(s => [s.student_id, s]));
   const ago = t => { if (!t) return "Never"; const d = (Date.now() - new Date(t)) / 864e5; return d < 1 ? "Today" : d < 2 ? "Yesterday" : `${Math.floor(d)} days ago`; };
   return head + (roster.length ? `<div class="table-wrap"><table class="dtable"><thead><tr><th>Student</th><th>Username</th><th>Right first time</th><th class="r">Avg per question</th><th class="r">Time this week</th><th class="r">Retries</th><th class="r">XP this week</th><th>Last active</th><th></th></tr></thead><tbody>
     ${roster.map(r => { const s = S[r.student_id] || {}, acc = +s.first_try ? +s.first_try_ok / +s.first_try : null;
-      return `<tr><td><button class="who link-plain" data-student="${r.student_id}">${BW.avatarHTML("av-sm", r)}${E(r.display_name)}</button></td><td class="mono">${r.username ? E(r.username) : `<span class="muted">own email</span>`}</td>
+      return `<tr><td><button class="who link-plain" data-student="${r.student_id}">${BW.avatarHTML("av-sm", r)}${E(r.display_name)}</button></td><td>${r.username ? `<span class="mono">${E(r.username)}</span><br>${BW.managedBadge()}` : `<span class="muted">own email</span>`}</td>
       <td>${acc == null ? `<span class="muted">–</span>` : `<span class="meter"><i style="width:${acc * 100}%;background:${acc < .5 ? "var(--bad)" : acc < .8 ? "var(--warn)" : "var(--good)"}"></i></span><span class="num">${BW.pct(acc)}</span>`}</td>
       <td class="r num">${s.avg_ms != null ? BW.fmtMs(s.avg_ms) : "–"}</td><td class="r num">${BW.fmtMs(s.week_ms || 0)}</td><td class="r num">${s.retries ?? 0}</td><td class="r num">${r.week_xp}</td>
       <td class="${r.last_active && Date.now() - new Date(r.last_active) > 14 * 864e5 ? "warn-t" : "muted"}">${ago(r.last_active)}</td>
-      <td class="r"><div class="act-btns">${r.managed ? `<button class="link" data-reset="${r.student_id}">Reset password</button>` : ""}<button class="link" data-remove="${r.student_id}">Remove</button>${r.managed ? `<button class="link danger-t" data-delstudent="${r.student_id}">Delete</button>` : ""}</div></td></tr>`; }).join("")}
+      <td class="r"><div class="act-btns">${r.managed ? `<button class="link" data-reset="${r.student_id}">Password</button>` : ""}<button class="link" data-remove="${r.student_id}">Remove from class</button>${r.managed ? `<button class="link danger-t" data-delstudent="${r.student_id}">Remove from school</button>` : ""}</div></td></tr>`; }).join("")}
     </tbody></table></div>` : `<div class="empty">No students yet. Share the join code or create logins.</div>`);
 };
 
@@ -146,14 +143,14 @@ BW.viewStudent = ({ sid, cid }) => {
   const roster = BW.fetchOnce("roster:" + cid, () => BW.api.rpc("class_roster", { p_class: cid }));
   const stats = BW.fetchOnce("sstats:" + cid, () => BW.api.rpc("class_student_stats", { p_class: cid }));
   const topics = BW.fetchOnce("stats:" + cid, () => BW.api.rpc("class_topic_stats", { p_class: cid }));
-  const atts = BW.fetchOnce("atts:" + sid, () => BW.api.sel(BW.sb.from("attempts").select("id,quiz_id,pct,correct,total,xp,active_ms,finished_at").eq("user_id", sid).eq("status", "done").order("finished_at", { ascending: false }).limit(60)));
+  const atts = BW.fetchOnce(`atts:${cid}:${sid}`, () => BW.db.studentResults(cid, sid));
   if (roster === undefined) return BW.loading;
   const r = (roster || []).find(x => x.student_id === sid); if (!r) return `<div class="empty">That student isn't in this class.</div>`;
   const s = (stats || []).find(x => x.student_id === sid) || {}, acc = +s.first_try ? +s.first_try_ok / +s.first_try : null;
   const mine = (topics || []).filter(t => t.student_id === sid).sort((a, b) => a.best - b.best);
   const filter = BW.ui.attFilter || "all";
   const shown = (atts || []).filter(t => filter === "all" || (filter === "code" ? t.quiz_id.startsWith("code.") : !t.quiz_id.startsWith("code.")));
-  return `<div class="sub-hdr"><button class="hdr-btn" data-back aria-label="Back">${I.back}</button><div><h1>${E(r.display_name)}</h1><p class="muted">${E(BW.classById(cid)?.name || "")}${r.username ? ` · username <span class="mono">${E(r.username)}</span>` : ""} · last active ${r.last_active ? BW.when(r.last_active) : "never"}</p></div>${BW.avatarHTML("avatar", r)}</div>
+  return `<div class="sub-hdr"><button class="hdr-btn" data-back aria-label="Back">${I.back}</button><div><h1>${E(r.display_name)}</h1><p class="muted">${E(BW.classById(cid)?.name || "")}${r.username ? ` · username <span class="mono">${E(r.username)}</span> ${BW.managedBadge()}` : ""} · last active ${r.last_active ? BW.when(r.last_active) : "never"}</p></div>${BW.avatarHTML("avatar", r)}</div>
   <div class="stat-row wide" style="margin:22px 0">
     <div class="stat card"><b class="num">${BW.pct(acc)}</b><span>Right first time</span></div><div class="stat card"><b class="num">${s.avg_ms != null ? BW.fmtMs(s.avg_ms) : "–"}</b><span>Avg per question</span></div>
     <div class="stat card"><b class="num">${BW.fmtMs(s.week_ms || 0)}</b><span>Time this week</span></div><div class="stat card"><b class="num">${BW.fmtMs(s.total_ms || 0)}</b><span>Total time</span></div>

@@ -25,12 +25,12 @@ BW.classBoard = c => { const rows = BW.fetchOnce("board:" + c.id, () => BW.api.r
 BW.classSettings = c => `<div class="two-col"><section class="panel"><h3>Class details</h3><form id="renameForm" class="form"><label for="csName">Class name</label><input id="csName" maxlength="60" value="${E(c.name)}" required><button class="small-btn">Save name</button></form>
     <div class="row-line" style="margin-top:14px"><span style="flex:1">Show the leaderboard to students</span><button class="toggle ${c.show_leaderboard ? "on" : ""}" data-act="toggleboard" aria-pressed="${c.show_leaderboard}"><span></span></button></div>
     <div class="row-line"><span style="flex:1">Archive this class<br><small class="muted">Hides it and its tasks from students. Nothing is deleted.</small></span><button class="toggle ${c.archived ? "on" : ""}" data-act="togglearchive" aria-pressed="${c.archived}"><span></span></button></div></section>
-  <section class="panel"><h3>Delete class</h3><p class="muted" style="margin-bottom:12px">Removes the class and its tasks. Student accounts and their scores stay.</p><button class="cta danger" data-act="delclass">Delete ${E(c.name)}</button></section></div>`;
+  <section class="panel"><h3>Delete class</h3><p class="muted" style="margin-bottom:12px">Removes the class, its tasks and notices. Student accounts, school logins and their scores stay.</p><button class="cta danger" data-act="delclass">Delete ${E(c.name)}</button></section></div>`;
 
 BW.bindClass = (root, { cid }) => {
   const c = BW.classById(cid); if (!c) return;
   const on = (sel, fn) => root.querySelectorAll(sel).forEach(el => el.addEventListener("click", e => fn(el, e)));
-  const upd = async patch => { const { error } = await BW.sb.from("classes").update(patch).eq("id", cid); if (error) return BW.toast(BW.errMsg(error)); Object.assign(c, patch); BW.invalidate("tdash", "board:" + cid); BW.toast("Saved"); BW.render(); };
+  const upd = async patch => { try { await BW.db.updateClass(cid, patch); } catch (e) { return BW.toast(BW.errMsg(e)); } Object.assign(c, patch); BW.invalidate("tdash", "board:" + cid); BW.toast("Saved"); BW.render(); };
   on("[data-ctab]", el => { BW.ui.classTab = el.dataset.ctab; BW.render(); });
   on("[data-copy]", el => BW.copy(el.dataset.copy));
   on("[data-act=newcode]", () => BW.modal(`<h2>Make a new join code?</h2><p class="muted" style="margin:8px 0 18px">The old code stops working. Students already in the class stay.</p><div class="row-btns"><button class="cta ghost" data-close>Cancel</button><button class="cta" id="yesCode">New code</button></div>`,
@@ -40,41 +40,32 @@ BW.bindClass = (root, { cid }) => {
   on("[data-settask]", el => BW.newTaskDialog({ items: [el.dataset.settask + ".1"], cid }));
   on("[data-board]", el => { BW.boardTab = el.dataset.board; BW.render(); });
   /* students */
-  on("[data-act=addstudents]", () => BW.modal(`<h2>Create student logins</h2><p class="muted" style="margin:8px 0 12px">One name per line, up to 40. Each student gets a username and password, and no email is needed.</p>
-    <form id="namesForm" class="form"><label for="namesTxt">Student names</label><textarea id="namesTxt" rows="8" placeholder="Amira Khan&#10;Ben Thompson"></textarea><div class="row-btns"><button type="button" class="cta ghost" data-close>Cancel</button><button class="cta" id="mkBtn">Create logins</button></div></form>`,
-    (w, close) => w.querySelector("#namesForm").onsubmit = async e => { e.preventDefault(); const names = w.querySelector("#namesTxt").value.split("\n").map(x => x.trim()).filter(Boolean);
-      if (!names.length) return BW.toast("Add at least one name");
-      const btn = w.querySelector("#mkBtn"); btn.disabled = true; btn.textContent = "Creating…";
-      try { const res = await BW.api.fn("create_students", { class_id: cid, names }); close(); BW.invalidate("roster:" + cid, "tdash", "board:" + cid); BW.render(); BW.showCredentials(res.students, c); }
-      catch (err) { btn.disabled = false; btn.textContent = "Create logins"; BW.toast(BW.errMsg(err)); } }));
+  on("[data-act=addstudents]", () => BW.newLoginsDialog(cid));
+  on("[data-act=fromdir]", () => BW.addFromDirectory(c));
   on("[data-act=rostercsv]", () => { const r = BW.cache["roster:" + cid]?.data || [];
     BW.csv(`${c.name.replace(/[^\w-]+/g, "_")}_students.csv`, [["Name", "Username", "XP this week", "Total XP", "Streak", "Last active", "Quizzes"], ...r.map(x => [x.display_name, x.username || "", x.week_xp, x.xp, x.streak, x.last_active || "", x.quizzes])]); });
-  on("[data-reset]", el => BW.modal(`<h2>Reset this password?</h2><p class="muted" style="margin:8px 0 18px">The student's old password stops working straight away.</p><div class="row-btns"><button class="cta ghost" data-close>Cancel</button><button class="cta" id="yesReset">Reset</button></div>`,
-    (w, close) => w.querySelector("#yesReset").onclick = async () => { try { const r = await BW.api.fn("reset_password", { student_id: el.dataset.reset }); close();
-      BW.modal(`<h2>New password</h2><p class="muted" style="margin:8px 0 12px">Give this to the student. It won't be shown again.</p><div class="cred mono">${E(r.password)}</div><div class="row-btns" style="margin-top:14px"><button class="cta ghost" id="cpPw">Copy</button><button class="cta" data-close>Done</button></div>`, w2 => w2.querySelector("#cpPw").onclick = () => BW.copy(r.password)); } catch (e) { BW.toast(BW.errMsg(e)); } }));
-  on("[data-remove]", el => BW.modal(`<h2>Remove from ${E(c.name)}?</h2><p class="muted" style="margin:8px 0 18px">They keep their account and scores, and can rejoin with the code.</p><div class="row-btns"><button class="cta ghost" data-close>Cancel</button><button class="cta danger" id="yesRm">Remove</button></div>`,
-    (w, close) => w.querySelector("#yesRm").onclick = async () => { const { error } = await BW.sb.from("class_members").delete().eq("class_id", cid).eq("student_id", el.dataset.remove); close();
-      if (error) return BW.toast(BW.errMsg(error)); BW.invalidate("roster:" + cid, "stats:" + cid, "board:" + cid, "asum:" + cid, "tdash"); BW.toast("Removed"); BW.render(); }));
-  on("[data-delstudent]", el => BW.modal(`<h2>Delete this account?</h2><p class="muted" style="margin:8px 0 18px">This permanently deletes the student's login, scores and badges.</p><div class="row-btns"><button class="cta ghost" data-close>Cancel</button><button class="cta danger" id="yesDs">Delete for ever</button></div>`,
-    (w, close) => w.querySelector("#yesDs").onclick = async () => { try { await BW.api.fn("delete_student", { student_id: el.dataset.delstudent }); close(); BW.invalidate("roster:" + cid, "stats:" + cid, "board:" + cid, "asum:" + cid, "tdash"); BW.toast("Account deleted"); BW.render(); } catch (e) { BW.toast(BW.errMsg(e)); } }));
+  const refresh = () => { BW.invalidate("roster:" + cid, "stats:" + cid, "sstats:" + cid, "board:" + cid, "asum:" + cid, "tdash", "dir"); BW.render(); };
+  const rosterRow = sid => (BW.cache["roster:" + cid]?.data || []).find(r => r.student_id === sid) || {};
+  on("[data-reset]", el => { const r = rosterRow(el.dataset.reset); BW.resetInfo({ display_name: r.display_name, username: r.username }); });
+  on("[data-remove]", el => { const r = rosterRow(el.dataset.remove);
+    BW.modal(`<h2>Remove from ${E(c.name)}?</h2><p class="muted" style="margin:8px 0 18px">${r.managed ? "They stay in your school directory with their scores, and you can add them back any time." : "They keep their account and scores, and can rejoin with the code."}</p><div class="row-btns"><button class="cta ghost" data-close>Cancel</button><button class="cta danger" id="yesRm">Remove</button></div>`,
+      (w, close) => w.querySelector("#yesRm").onclick = async () => {
+        try { if (r.managed) { const p = await BW.db.profileOf(el.dataset.remove); await BW.db.setClasses(el.dataset.remove, p.class_ids.filter(x => x !== cid && BW.classById(x))); } else await BW.db.removeMember(cid, el.dataset.remove); }
+        catch (e) { close(); return BW.toast(BW.errMsg(e)); }
+        close(); BW.toast("Removed"); refresh(); }); });
+  on("[data-delstudent]", el => { const r = rosterRow(el.dataset.delstudent); BW.removeFromSchoolDialog({ id: el.dataset.delstudent, display_name: r.display_name || "this student" }, refresh); });
+  /* notices */
+  on("[data-act=compose]", () => BW.composeNotice(cid));
+  on("[data-pinnotice]", async el => { const [nid, v] = el.dataset.pinnotice.split("|"); try { await BW.db.pinNotice(cid, nid, v === "1"); BW.invalidate("notices:" + cid); BW.render(); } catch (e) { BW.toast(BW.errMsg(e)); } });
+  on("[data-delnotice]", el => BW.modal(`<h2>Delete this notice?</h2><p class="muted" style="margin:8px 0 18px">It disappears from students' Messages in ${E(c.name)}.</p><div class="row-btns"><button class="cta ghost" data-close>Cancel</button><button class="cta danger" id="yesDn">Delete</button></div>`,
+    (w, close) => w.querySelector("#yesDn").onclick = async () => { try { await BW.db.deleteNotice(cid, el.dataset.delnotice); } catch (e) { close(); return BW.toast(BW.errMsg(e)); } close(); BW.invalidate("notices:" + cid); BW.render(); }));
   /* settings */
   const rf = root.querySelector("#renameForm"); if (rf) rf.onsubmit = e => { e.preventDefault(); const n = root.querySelector("#csName").value.trim(); if (n) upd({ name: n.slice(0, 60) }); };
   on("[data-act=toggleboard]", () => upd({ show_leaderboard: !c.show_leaderboard }));
   on("[data-act=togglearchive]", () => upd({ archived: !c.archived }));
   on("[data-act=delclass]", () => BW.modal(`<h2>Delete ${E(c.name)}?</h2><p class="muted" style="margin:8px 0 12px">This removes the class and all its tasks. It can't be undone.</p><form id="dcForm" class="form"><label for="dcName">Type the class name to confirm</label><input id="dcName" autocomplete="off"><div class="row-btns"><button type="button" class="cta ghost" data-close>Cancel</button><button class="cta danger">Delete class</button></div></form>`,
     (w, close) => w.querySelector("#dcForm").onsubmit = async e => { e.preventDefault(); if (w.querySelector("#dcName").value.trim() !== c.name) return BW.toast("The name doesn't match");
-      const { error } = await BW.sb.from("classes").delete().eq("id", cid); close(); if (error) return BW.toast(BW.errMsg(error));
+      try { await BW.db.deleteClass(cid); } catch (x) { close(); return BW.toast(BW.errMsg(x)); } close();
       BW.S.classes = BW.S.classes.filter(x => x.id !== cid); BW.invalidate("tdash"); BW.toast("Class deleted"); BW.go("home"); }));
 };
 
-BW.showCredentials = (list, c) => {
-  const ok = list.filter(x => x.username), bad = list.filter(x => x.error);
-  const text = ok.map(x => `${x.name}\t${x.username}\t${x.password}`).join("\n");
-  BW.modal(`<h2>Student logins created</h2><p class="muted" style="margin:8px 0 12px">Passwords are shown only once. Hand them out now or download the file. You can reset any password later.</p>
-    <div class="table-wrap cred-table"><table class="dtable"><thead><tr><th>Name</th><th>Username</th><th>Password</th></tr></thead><tbody>${ok.map(x => `<tr><td>${E(x.name)}</td><td class="mono">${E(x.username)}</td><td class="mono">${E(x.password)}</td></tr>`).join("")}</tbody></table></div>
-    ${bad.length ? `<p class="note err">Couldn't create: ${bad.map(x => E(x.name) + " (" + E(x.error) + ")").join(", ")}</p>` : ""}
-    <p class="note">Students sign in with their username (no @) and password.</p>
-    <div class="row-btns" style="margin-top:14px"><button class="cta ghost" id="cpAll">Copy all</button><button class="cta ghost" id="dlCsv">Download CSV</button><button class="cta" data-close>Done</button></div>`,
-    w => { w.querySelector("#cpAll").onclick = () => BW.copy(text);
-      w.querySelector("#dlCsv").onclick = () => BW.csv(`${c.name.replace(/[^\w-]+/g, "_")}_logins.csv`, [["Name", "Username", "Password"], ...ok.map(x => [x.name, x.username, x.password])]); });
-};

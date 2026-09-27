@@ -1,0 +1,209 @@
+/* Firebase data layer (Auth + Firestore). Keeps the same operations the screens used before (BW.api.rpc / BW.api.fn / BW.db),
+   now implemented against Firestore, with the security rules in firebase/firestore.rules doing the server's checking. */
+BW.fbApp = firebase.initializeApp(BW.CONFIG.firebase);
+BW.auth = firebase.auth();
+BW.fs = firebase.firestore();
+const FV = firebase.firestore.FieldValue;
+const col = (...p) => BW.fs.collection(p.join("/"));
+const ref = (...p) => BW.fs.doc(p.join("/"));
+const ts = v => v && typeof v.toDate === "function" ? v.toDate().toISOString() : v ?? null;
+const utcDay = d => (d instanceof Date ? d : new Date(d)).toISOString().slice(0, 10);
+const newId = () => BW.fs.collection("_").doc().id;
+const CODE_ABC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const randCode = n => { const a = new Uint32Array(n); crypto.getRandomValues(a); return [...a].map(x => CODE_ABC[x % 32]).join(""); };
+const AVATARS = ["#5B4BD5", "#1F7A8C", "#B0306E", "#C2410C", "#167A4B", "#2563EB", "#B3261E", "#6D28D9"];
+
+const ERRORS = {
+  "auth/invalid-credential": "That email or username and password don't match.",
+  "auth/wrong-password": "That email or username and password don't match.",
+  "auth/user-not-found": "That email or username and password don't match.",
+  "auth/invalid-email": "That doesn't look like an email address or username.",
+  "auth/email-already-in-use": "There's already an account with that email. Try signing in.",
+  "auth/weak-password": "Use a longer password: at least 8 characters.",
+  "auth/too-many-requests": "Too many attempts. Wait a few minutes and try again.",
+  "auth/requires-recent-login": "For your security, sign in again and then retry.",
+  "auth/network-request-failed": "Can't reach Bitwise. Check your internet connection.",
+  "auth/operation-not-allowed": "Email sign-in isn't switched on for this Bitwise project yet.",
+  "auth/configuration-not-found": "Sign-in isn't set up for this Bitwise project yet (Firebase console → Authentication → Get started).",
+  "permission-denied": "You don't have permission to do that.",
+  bad_code: "That class code doesn't match an open class. Check it with your teacher.",
+  own_class: "That's your own class, so you're already in it as the teacher.",
+  bad_teacher_code: "That teacher code isn't right. Ask your school's Bitwise admin for it.",
+  managed_locked: "Your school manages this account, so ask your teacher to make that change.",
+  too_fast: "That quiz was finished too quickly to count, so it wasn't saved.",
+  spark_no_reset: "Bitwise can't reset a school login's password on the free Firebase plan. Use the login card from when the account was made. If it's lost, remove the student from your school and create a new login.",
+  not_found: "That couldn't be found. It may have been deleted.",
+  forbidden: "You don't have access to that."
+};
+BW.errMsg = e => {
+  const code = e?.code || "", m = (e && (e.message || e.error)) || String(e);
+  for (const k in ERRORS) if (code === k || code.endsWith("/" + k) || m.includes(k)) return ERRORS[k];
+  if (code === "permission-denied" || /insufficient permissions/i.test(m)) return ERRORS["permission-denied"];
+  return /fetch|network|offline/i.test(m) ? "Can't reach Bitwise. Check your internet connection." : m;
+};
+const fail = code => { const e = new Error(code); e.code = code; throw e; };
+
+/* ---------- shape converters (Firestore → the shapes the screens use) ---------- */
+BW.toProfile = (id, d) => ({ id, role: d.role, display_name: d.displayName, avatar_color: d.avatarColor, school_id: d.schoolId || null, managed: !!d.managed,
+  username: d.username || null, class_ids: d.classIds || [], xp: d.xp || 0, week_xp: d.weekXp || 0, week_key: d.weekKey || "", streak: d.streak || 0,
+  best_streak: d.bestStreak || 0, last_day: d.lastDay ? BW.londonDay(d.lastDay.toDate()) : null, last_day_ts: d.lastDay || null, prefs: d.prefs || {}, created_by: d.createdBy || null });
+BW.toClass = (id, d) => ({ id, name: d.name, join_code: d.joinCode, show_leaderboard: !!d.showLeaderboard, archived: !!d.archived, teacher_id: d.teacherId, school_id: d.schoolId, created_at: ts(d.createdAt) });
+BW.toTask = (id, cid, d) => ({ id, class_id: cid, title: d.title, instructions: d.instructions || "", quiz_ids: d.quizIds, target_pct: d.targetPct, due_at: ts(d.dueAt), created_at: ts(d.createdAt) });
+BW.ansRow = (a, i) => ({ seq: a.seq ?? i + 1, q_code: a.code || "", q_type: a.type, q_key: a.key || "", q_text: a.text || "", topic: a.topic || "", answer: a.answer || "",
+  correct_answer: a.correct || "", is_correct: !!a.ok, try_no: a.try || 1, ms: a.ms || 0, detail: a.detail || null });
+
+/* ---------- auth ---------- */
+BW.api = {
+  loginEmail: id => id.includes("@") ? id.trim() : `${id.trim().toLowerCase()}@${BW.CONFIG.pupilDomain}`,
+  async signIn(id, pw) { await BW.auth.signInWithEmailAndPassword(BW.api.loginEmail(id), pw); },
+  async signOut() { await BW.auth.signOut(); },
+  async resetEmail(email) { await BW.auth.sendPasswordResetEmail(email.trim(), { url: location.origin + location.pathname }); },
+  async changePassword(pw) { if (BW.S.profile?.managed) fail("managed_locked"); await BW.auth.currentUser.updatePassword(pw); },
+  /* sign up: a student, a teacher joining a school with its teacher code, or a teacher creating a new school */
+  async signUp({ email, password, name, role, teacherCode, schoolName }) {
+    const cred = await BW.auth.createUserWithEmailAndPassword(email.trim(), password);
+    const uid = cred.user.uid, batch = BW.fs.batch();
+    const profile = { role: "student", displayName: name.slice(0, 40), avatarColor: BW.pick(AVATARS), schoolId: null, managed: false, classIds: [],
+      xp: 0, weekXp: 0, weekKey: "", streak: 0, bestStreak: 0, lastDay: null, prefs: {}, createdAt: FV.serverTimestamp() };
+    try {
+      if (role === "teacher" && schoolName) {
+        const sid = newId(), code = `${randCode(5)}-${randCode(5)}`;
+        batch.set(ref("teacherCodes", code), { schoolId: sid });
+        batch.set(ref("schools", sid), { name: schoolName.slice(0, 80), createdBy: uid, createdAt: FV.serverTimestamp(), teacherCode: code });
+        Object.assign(profile, { role: "teacher", schoolId: sid });
+      } else if (role === "teacher") {
+        const snap = await ref("teacherCodes", teacherCode.trim().toUpperCase()).get();
+        if (!snap.exists) fail("bad_teacher_code");
+        Object.assign(profile, { role: "teacher", schoolId: snap.data().schoolId, teacherCode: teacherCode.trim().toUpperCase() });
+      }
+      batch.set(ref("users", uid), profile);
+      await batch.commit();
+    } catch (e) { await cred.user.delete().catch(() => { }); throw e; }   // don't leave a login with no profile behind
+    cred.user.sendEmailVerification({ url: location.origin + location.pathname }).catch(() => { });
+    return uid;
+  }
+};
+
+/* ---------- loading a signed-in person's world ---------- */
+BW.recentAttempts = async (n = 400) => (await col("users", BW.S.user.id, "attempts").where("status", "==", "done").orderBy("finishedAt", "desc").limit(n).get())
+  .docs.map(d => ({ id: d.id, ...d.data() }));
+BW.loadAll = async () => {
+  const S = BW.S, uid = S.user.id;
+  const psnap = await ref("users", uid).get();
+  if (!psnap.exists) fail(S.user.email?.endsWith("@" + BW.CONFIG.pupilDomain) ? "removed_from_school" : "no_profile");
+  S.profile = BW.toProfile(uid, psnap.data());
+  const [best, badges, recent] = await Promise.all([col("users", uid, "best").get(), col("users", uid, "badges").get(), BW.recentAttempts()]);
+  S.best = Object.fromEntries(best.docs.map(d => [d.id, { pct: +d.data().pct, tries: d.data().tries, last: ts(d.data().lastAt) }]));
+  S.badges = Object.fromEntries(badges.docs.map(d => [d.id, ts(d.data().earnedAt)]));
+  S.recent = recent;
+  S.hist = recent.slice(0, 40).map(a => ({ quiz_id: a.quizId, pct: a.pct, xp: a.xp, finished_at: ts(a.finishedAt) }));
+  if (S.profile.role === "teacher") {
+    const [cls, school] = await Promise.all([col("classes").where("teacherId", "==", uid).get(), S.profile.school_id ? ref("schools", S.profile.school_id).get() : null]);
+    S.classes = cls.docs.map(d => BW.toClass(d.id, d.data())).sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+    S.school = school?.exists ? { id: school.id, ...school.data(), created_at: ts(school.data().createdAt) } : null;
+    S.tasks = []; S.notices = [];
+  } else {
+    const got = await Promise.all(S.profile.class_ids.map(cid => ref("classes", cid).get().catch(() => null)));
+    S.classes = got.filter(g => g?.exists).map(g => BW.toClass(g.id, g.data()));
+    S.school = null;
+    [S.tasks, S.notices] = await Promise.all([BW.computeTasks(), BW.loadNotices()]);
+  }
+};
+
+/* the student's tasks across their classes, with progress on every item (same shape as before) */
+BW.computeTasks = async () => {
+  const S = BW.S, live = S.classes.filter(c => !c.archived);
+  const lists = await Promise.all(live.map(c => col("classes", c.id, "tasks").get().then(q => q.docs.map(d => ({ ...BW.toTask(d.id, c.id, d.data()), class_name: c.name }))).catch(() => [])));
+  const done = S.recent || [];
+  return lists.flat().map(t => {
+    const since = t.created_at || "";
+    const items = t.quiz_ids.map(q => { const mine = done.filter(a => a.quizId === q && ts(a.finishedAt) >= since);
+      const passed = mine.filter(a => a.pct * 100 >= t.target_pct).map(a => ts(a.finishedAt)).sort();
+      return { quiz_id: q, best: mine.length ? Math.max(...mine.map(a => a.pct)) : null, tries: mine.length, completed_at: passed[0] || null }; });
+    const itemsDone = items.filter(i => i.completed_at).length, tries = items.reduce((s, i) => s + i.tries, 0);
+    return { ...t, items, items_done: itemsDone, tries, best: tries ? items.reduce((s, i) => s + (i.best || 0), 0) / items.length : null,
+      completed_at: itemsDone === items.length ? items.map(i => i.completed_at).sort().pop() : null };
+  }).sort((a, b) => (a.due_at || "9999").localeCompare(b.due_at || "9999") || (b.created_at || "").localeCompare(a.created_at || ""));
+};
+BW.refreshTasks = async () => { if (BW.isTeacher()) return; BW.S.recent = await BW.recentAttempts(); BW.S.tasks = await BW.computeTasks(); };
+
+/* ---------- attempts: start, and finish with the exact XP the rules will check ---------- */
+BW.quizMult = q => /\.0$/.test(q) ? 1.0 : /\.1$/.test(q) ? 1.2 : /\.2$/.test(q) ? 1.5 : /\.3$/.test(q) ? 2.0 : /\.boss$/.test(q) ? 1.8 : /^daily\./.test(q) ? 1.5 : /^code\./.test(q) ? 1.5 : 1.2;
+BW.startAttempt = async (quizId, assignmentId) => {
+  const r = col("users", BW.S.user.id, "attempts").doc();
+  await r.set({ quizId, assignmentId: assignmentId || null, status: "open", startedAt: FV.serverTimestamp() });
+  (BW.openAttempts = BW.openAttempts || {})[r.id] = quizId;
+  return r.id;
+};
+BW.finishAttempt = async ({ id, total, correct, maxCombo = 0, answers = [], activeMs = 0 }) => {
+  const S = BW.S, uid = S.user.id, attemptRef = ref("users", uid, "attempts", id);
+  const att = await attemptRef.get(); if (!att.exists) fail("not_found");
+  const quizId = att.data().quizId, mult = BW.quizMult(quizId), pct = correct / total, pass = correct * 5 >= total * 4;
+  const [prof, bestSnap] = await Promise.all([ref("users", uid).get(), ref("users", uid, "best", quizId).get()]);
+  const p = prof.data(), prevBest = bestSnap.exists ? bestSnap.data().pct : 0, prevTries = bestSnap.exists ? bestSnap.data().tries : 0;
+  let xp, firstDaily = false;
+  if (quizId.startsWith("code.")) xp = pct > prevBest ? Math.round((pct - prevBest) * total * 10 * mult) + (pass && prevBest < 0.8 ? Math.round(20 * mult) : 0) : 0;
+  else {
+    xp = Math.round(correct * 10 * mult) + (pass ? Math.round(20 * mult) : 0) + (maxCombo >= 3 ? Math.min(maxCombo, 20) * 2 : 0);
+    if (quizId.startsWith("daily.") && !(await ref("users", uid, "daily", quizId).get()).exists) { firstDaily = true; xp += 30; }
+  }
+  const wk = BW.weekKey(), today = utcDay(new Date());
+  const lastDay = p.lastDay ? utcDay(p.lastDay.toDate()) : null, yesterday = utcDay(new Date(Date.now() - 864e5));
+  const streakGuess = lastDay === today ? p.streak : lastDay === yesterday ? p.streak + 1 : 1;
+  // the server's date decides the streak; try our best guess first, then the other possibilities (clock drift around midnight)
+  const candidates = [...new Set([streakGuess, p.streak, p.streak + 1, 1])];
+  let lastErr;
+  for (const streak of candidates) {
+    const b = BW.fs.batch();
+    b.update(attemptRef, { status: "done", finishedAt: FV.serverTimestamp(), total, correct, pct, xp, maxCombo, activeMs: Math.max(0, Math.round(activeMs)), answers: answers.slice(0, 150) });
+    if (firstDaily) b.set(ref("users", uid, "daily", quizId), { at: FV.serverTimestamp() });
+    b.set(ref("users", uid, "best", quizId), { pct: Math.max(pct, prevBest), tries: prevTries + 1, lastAt: FV.serverTimestamp(), attempt: id });
+    b.update(ref("users", uid), { xp: (p.xp || 0) + xp, weekXp: p.weekKey === wk ? (p.weekXp || 0) + xp : xp, weekKey: wk, streak,
+      bestStreak: Math.max(p.bestStreak || 0, streak), lastDay: FV.serverTimestamp(), lastAttempt: id });
+    try { await b.commit(); lastErr = null; break; } catch (e) { lastErr = e; if (e.code !== "permission-denied") break; }
+  }
+  if (lastErr) {
+    const tooFast = (Date.now() - att.data().startedAt.toDate()) < total * 1500 + 2000;
+    fail(tooFast ? "too_fast" : lastErr.code || "permission-denied");
+  }
+  const after = (await ref("users", uid).get()).data();
+  S.profile = BW.toProfile(uid, after);
+  S.best[quizId] = { pct: Math.max(pct, prevBest), tries: prevTries + 1, last: new Date().toISOString() };
+  const badges = BW.newBadges({ quizId, pct, pass, total, correct, maxCombo, firstDaily, assignmentId: att.data().assignmentId });
+  BW.shareResult(id, badges).catch(e => console.warn("class copy", e));   // leaderboards, teacher analytics, badges
+  return { xp_gain: xp, xp: after.xp, week_xp: after.weekXp, streak: after.streak, pct, pass, first_daily: firstDaily, badges };
+};
+BW.newBadges = ({ quizId, pct, pass, total, correct, maxCombo, firstDaily, assignmentId }) => {
+  const S = BW.S, p = S.profile, isCode = quizId.startsWith("code."), c = ["first_steps"];
+  if (pct === 1 && total >= 6) c.push("perfect");
+  if (p.streak >= 3) c.push("streak_3"); if (p.streak >= 7) c.push("streak_7"); if (p.streak >= 30) c.push("streak_30");
+  if (pass && /\.2$/.test(quizId)) c.push("gold_rush"); if (pass && /\.3$/.test(quizId)) c.push("platinum"); if (pass && /\.boss$/.test(quizId)) c.push("boss_slayer");
+  if (pass && ["mem.bin.2", "mem.hex.2", "mem.bin.3", "mem.hex.3"].includes(quizId)) c.push("binary_brain");
+  if (pass && ["logic.tables.2", "logic.expressions.2", "logic.tables.3", "logic.expressions.3"].includes(quizId)) c.push("logic_lord");
+  if (quizId === "quick.speed" && correct >= 15) c.push("speed_demon");
+  if (maxCombo >= 10) c.push("combo_10"); if (p.xp >= 1000) c.push("xp_1000"); if (p.xp >= 5000) c.push("xp_5000");
+  if (firstDaily) c.push("daily_done");
+  if (isCode && pct === 1) c.push("first_program");
+  if (Object.entries(S.best).filter(([q, b]) => q.startsWith("code.") && b.pct >= 1).length >= 10) c.push("code_10");
+  if (Object.values(S.best).reduce((s, b) => s + (b.tries || 0), 0) >= 25) c.push("quiz_25");
+  const task = assignmentId && S.tasks.find(t => t.id === assignmentId);
+  if (task && pct * 100 >= task.target_pct && (!task.due_at || new Date(task.due_at) >= new Date())) c.push("on_time");
+  if (new Set(Object.entries(S.best).filter(([q, b]) => /\.[0-3]$/.test(q) && b.pct >= BW.PASS).map(([q]) => q.split(".")[0])).size >= 11) c.push("all_rounder");
+  return [...new Set(c)].filter(b => !S.badges[b]);
+};
+/* copy a finished attempt into each class (so teachers can analyse it), refresh leaderboard entries, award badges */
+BW.shareResult = async (attemptId, badges) => {
+  const S = BW.S, uid = S.user.id, a = (await ref("users", uid, "attempts", attemptId).get()).data(), p = (await ref("users", uid).get()).data();
+  const medals = BW.totalMedals();
+  // one small write per class, so a class the student has since left can't block the others
+  await Promise.all((p.classIds || []).map(async cid => { const b = BW.fs.batch();
+    const extra = await BW.updateMemberStats(cid, a.answers || [], a.quizId, a.pct).catch(() => ({}));
+    b.update(ref("classes", cid, "members", uid), { displayName: p.displayName, avatarColor: p.avatarColor, xp: p.xp, weekXp: p.weekXp, weekKey: p.weekKey,
+      streak: p.streak, lastDay: p.lastDay, medals, quizzes: FV.increment(1), lastActive: FV.serverTimestamp(), ...extra });
+    b.set(ref("classes", cid, "results", attemptId), { uid, displayName: p.displayName, quizId: a.quizId, assignmentId: a.assignmentId || null, total: a.total,
+      correct: a.correct, pct: a.pct, xp: a.xp, activeMs: a.activeMs, finishedAt: a.finishedAt, answers: a.answers });
+    return b.commit().catch(e => console.warn("class", cid, e.code)); }));
+  if (badges.length) { const b = BW.fs.batch();
+    badges.forEach(k => { b.set(ref("users", uid, "badges", k), { earnedAt: FV.serverTimestamp() }); S.badges[k] = new Date().toISOString(); });
+    await b.commit(); }
+};

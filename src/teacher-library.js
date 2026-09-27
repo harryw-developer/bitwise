@@ -43,10 +43,10 @@ BW.libBuild = () => {
   return BW.libRoot = root;
 };
 BW.libUsage = () => {
-  const rows = BW.fetchOnce("myassign", () => BW.api.sel(BW.sb.from("assignments").select("quiz_ids,created_at,class_id").order("created_at", { ascending: false }).limit(500)));
+  const rows = BW.fetchOnce("tdash", () => BW.db.dashboard())?.a.slice().sort((x, y) => (y.created_at || "").localeCompare(x.created_at || ""));
   const used = {}, recent = [];
   (rows || []).filter(r => BW.classById(r.class_id)?.teacher_id === BW.S.user.id).forEach(r => r.quiz_ids.forEach(q => { used[q] = (used[q] || 0) + 1; if (!recent.includes(q)) recent.push(q); }));
-  return { used, recent: recent.slice(0, 30), loading: rows === undefined };
+  return { used, recent: recent.slice(0, 30), loading: !BW.cache.tdash || !("data" in BW.cache.tdash) };
 };
 BW.libNode = path => {
   BW.libBuild();
@@ -315,11 +315,11 @@ BW.newTaskDialog = ({ items, cid, fromBasket }) => {
       redraw(); };
     $("ntForm").onsubmit = async e => { e.preventDefault(); if (!list.length) return;
       const classId = $("ntClass").value, btn = $("ntGo"); btn.disabled = true; btn.textContent = "Setting…";
-      const { error } = await BW.sb.from("assignments").insert({ class_id: classId, quiz_ids: list, title: $("ntTitle").value.trim().slice(0, 100) || autoTitle(),
-        instructions: $("ntNote").value.trim().slice(0, 1000), target_pct: +$("ntTarget").value, due_at: $("ntDue").value ? new Date($("ntDue").value).toISOString() : null });
-      if (error) { btn.disabled = false; btn.textContent = "Set homework"; return BW.toast(BW.errMsg(error)); }
+      try { await BW.db.createTask(classId, { quiz_ids: list, title: $("ntTitle").value.trim().slice(0, 100) || autoTitle(),
+        instructions: $("ntNote").value.trim().slice(0, 1000), target_pct: +$("ntTarget").value, due_at: $("ntDue").value ? new Date($("ntDue").value).toISOString() : null }); }
+      catch (x) { btn.disabled = false; btn.textContent = "Set homework"; return BW.toast(BW.errMsg(x)); }
       close(); if (fromBasket) BW.lib.basket = [];
-      BW.invalidate("assign:" + classId, "asum:" + classId, "tdash", "myassign");
+      BW.invalidate("assign:" + classId, "asum:" + classId, "tdash");
       BW.toast(`Homework set for ${BW.classById(classId)?.name || "the class"}`); BW.sfx.play("win");
       BW.go("class", { cid: classId }); BW.ui.classTab = "tasks"; BW.render(); };
   });

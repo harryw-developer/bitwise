@@ -1,10 +1,11 @@
 # generated
 build/
 public/
-supabase/seed_code_solutions.sql
 # private: model solutions and local test logins never leave this machine
 solutions/
 supabase/test-accounts.local.md
+firebase/test-accounts.local.md
+*.local.md
 # local tooling
 .claude/
 .DS_Store

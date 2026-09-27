@@ -29,24 +29,8 @@ BW.weekKey = (d = new Date()) => {
 BW.levelOf = xp => { let L = 1, need = 100, acc = 0; while (xp >= acc + need) { acc += need; L++; need = 100 * L; } return { L, into: xp - acc, need }; };
 BW.titleOf = L => BW.TITLES.filter(t => L >= t[0]).pop()[1];
 
-BW.S = { user: null, profile: null, best: {}, badges: {}, hist: [], classes: [], tasks: [] };
+BW.S = { user: null, profile: null, best: {}, badges: {}, hist: [], recent: [], classes: [], tasks: [], notices: [], school: null };
 BW.isTeacher = () => BW.S.profile?.role === "teacher";
-BW.loadAll = async () => {
-  const S = BW.S, uid = S.user.id, api = BW.api, sb = BW.sb;
-  const [profile, prog, badges, hist, classes] = await Promise.all([
-    api.sel(sb.from("profiles").select("*").eq("id", uid).single()),
-    api.rpc("my_progress"),
-    api.sel(sb.from("achievements").select("badge, earned_at").eq("user_id", uid)),
-    api.sel(sb.from("attempts").select("quiz_id, pct, xp, finished_at").eq("user_id", uid).eq("status", "done").order("finished_at", { ascending: false }).limit(40)),
-    api.sel(sb.from("classes").select("*").order("created_at"))
-  ]);
-  S.profile = profile;
-  S.best = Object.fromEntries(prog.map(r => [r.quiz_id, { pct: +r.best, tries: +r.attempts, last: r.last_at }]));
-  S.badges = Object.fromEntries(badges.map(b => [b.badge, b.earned_at]));
-  S.hist = hist; S.classes = classes;
-  S.tasks = profile.role === "student" ? await api.rpc("my_assignments") : [];
-};
-BW.refreshTasks = async () => { if (!BW.isTeacher()) BW.S.tasks = await BW.api.rpc("my_assignments"); };
 /* after any saved quiz or code submission: refresh tasks and celebrate any homework that has just been finished */
 BW.afterWork = async () => {
   if (BW.isTeacher()) return;
@@ -72,7 +56,7 @@ BW.toggleFav = key => {
   favs[key] ? delete favs[key] : favs[key] = 1;
   p.prefs = { ...(p.prefs || {}), favs };
   clearTimeout(prefTimer);
-  prefTimer = setTimeout(() => BW.sb.from("profiles").update({ prefs: p.prefs }).eq("id", p.id).then(({ error }) => error && BW.toast(BW.errMsg(error))), 700);
+  prefTimer = setTimeout(() => BW.db.updateProfile({ prefs: p.prefs }).catch(e => BW.toast(BW.errMsg(e))), 700);
   return !!favs[key];
 };
 

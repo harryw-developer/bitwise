@@ -214,8 +214,8 @@ BW.bindCode = (root, { cid, a }) => {
   $("resetBtn").onclick = () => BW.modal(`<h2>Reset your code?</h2><p class="muted" style="margin:8px 0 18px">This replaces your code with the starting code.</p><div class="row-btns"><button class="cta ghost" data-close>Cancel</button><button class="cta danger" id="yesReset">Reset</button></div>`,
     (w, close) => w.querySelector("#yesReset").onclick = () => { ide.code = c.starter; cm ? cm.setValue(c.starter) : ($("plainEd").value = c.starter); saveDraft(); close(); });
   $("solBtn")?.addEventListener("click", async () => {
-    const { data, error } = await BW.sb.from("code_solutions").select("solution").eq("challenge_id", c.id).maybeSingle();
-    BW.modal(`<h2>Model solution</h2><p class="muted" style="margin:6px 0 12px">One correct approach. Students' programs are marked on output, so other approaches pass too.</p><pre class="codeview">${E(error ? BW.errMsg(error) : data?.solution || "Not available")}</pre><button class="cta" data-close style="margin-top:14px">Close</button>`);
+    let sol; try { sol = await BW.db.codeSolution(c.id) || "Not available"; } catch (e) { sol = BW.errMsg(e); }
+    BW.modal(`<h2>Model solution</h2><p class="muted" style="margin:6px 0 12px">One correct approach. Students' programs are marked on output, so other approaches pass too.</p><pre class="codeview">${E(sol)}</pre><button class="cta" data-close style="margin-top:14px">Close</button>`);
   });
   if (ide.results) { showTab("tests"); renderTests(); }
   setTimeout(() => cm?.refresh(), 0);

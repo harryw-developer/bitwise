@@ -1,7 +1,14 @@
-/* Public Supabase settings. The anon key is designed to be public: all data access is enforced by row-level security. */
+/* Public Firebase web settings. These identify the project and are designed to be public:
+   all data access is enforced by the Firestore security rules in firebase/firestore.rules. */
 const BW = { units: [], gen: {} };
 BW.CONFIG = {
-  url: "https://xejmxbombnpboxlnldha.supabase.co",
-  key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhlam14Ym9tYm5wYm94bG5sZGhhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA0NDI0MzcsImV4cCI6MjEwNjAxODQzN30.gaMWY8BOnR5E1eLADwU3dkA3ZeeiKASKsttV3mxK_jU",
+  firebase: {
+    apiKey: "AIzaSyDFiQWt-n_K2i2Qw91zifbk9YVokvJHCAY",
+    authDomain: "bitwise-1293f.firebaseapp.com",
+    projectId: "bitwise-1293f",
+    appId: "1:669910761835:web:ccc32a880589399bed4c2e",
+    messagingSenderId: "669910761835",
+    storageBucket: "bitwise-1293f.firebasestorage.app"
+  },
   pupilDomain: "pupils.bitwise.invalid"
 };
