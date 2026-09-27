@@ -10,7 +10,7 @@ const memberRow = d => { const x = d.data(), wk = BW.weekKey(), live = x.lastDay
     week_xp: x.weekKey === wk ? x.weekXp || 0 : 0, streak: live ? x.streak || 0 : 0, medals: x.medals || 0, quizzes: x.quizzes || 0, last_active: ts(x.lastActive),
     joined_at: ts(x.joinedAt), is_me: d.id === me(), stats: x.stats || {}, best: x.best || {}, tries: x.tries || {} }; };
 const resultRow = d => { const x = d.data(); return { id: d.id, uid: x.uid, display_name: x.displayName, quiz_id: x.quizId, assignment_id: x.assignmentId,
-  total: x.total, correct: x.correct, pct: x.pct, xp: x.xp, active_ms: x.activeMs, finished_at: ts(x.finishedAt), answers: (x.answers || []).map(BW.ansRow) }; };
+  total: x.total, correct: x.correct, pct: x.pct, xp: x.xp, active_ms: x.activeMs, finished_at: ts(x.finishedAt), answers: x.answers ? x.answers.map(BW.ansRow) : null }; };
 const keyOf = q => q.replace(/\./g, "_");
 const mondayLondon = () => { const d = new Date(); const day = (d.getDay() + 6) % 7; d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - day); return d.toISOString(); };
 
@@ -36,7 +36,7 @@ BW.db.updateClass = (cid, patch) => ref("classes", cid).update(Object.fromEntrie
 BW.db.deleteClass = async cid => {
   const managed = (await col("classes", cid, "members").where("managed", "==", true).get()).docs.map(d => d.id);   // school logins lose this class from their list
   for (let i = 0; i < managed.length; i += 400) { const b = BW.fs.batch(); managed.slice(i, i + 400).forEach(sid => b.update(ref("users", sid), { classIds: FV.arrayRemove(cid) })); await b.commit().catch(() => { }); }
-  for (const sub of ["members", "tasks", "notices", "results"]) {
+  for (const sub of ["members", "tasks", "notices", "results", "answers"]) {
     const q = await col("classes", cid, sub).get();
     for (let i = 0; i < q.docs.length; i += 400) { const b = BW.fs.batch(); q.docs.slice(i, i + 400).forEach(d => b.delete(d.ref)); await b.commit(); }
   }
@@ -90,9 +90,20 @@ BW.db.dashboard = async () => {
 BW.db.roster = async cid => (await col("classes", cid, "members").get()).docs.map(memberRow).sort((a, b) => a.display_name.localeCompare(b.display_name));
 BW.db.leaderboard = async cid => { try { return await BW.db.roster(cid); } catch (e) { if (e.code === "permission-denied") return []; throw e; } };
 BW.db.results = async (cid, quizIds) => {
-  let q = col("classes", cid, "results");
-  if (quizIds) q = q.where("quizId", "in", quizIds.slice(0, 30));
-  return (await q.orderBy("finishedAt", "desc").limit(2000).get()).docs.map(resultRow);
+  if (!quizIds) return (await col("classes", cid, "results").orderBy("finishedAt", "desc").limit(3000).get()).docs.map(resultRow);
+  const groups = []; for (let i = 0; i < quizIds.length; i += 30) groups.push(quizIds.slice(i, i + 30));
+  const snaps = await Promise.all(groups.map(g => col("classes", cid, "results").where("quizId", "in", g).orderBy("finishedAt", "desc").limit(3000).get()));
+  return snaps.flatMap(q => q.docs.map(resultRow));
+};
+/* the answers behind one result (fetched only when a teacher opens it); older results carry them inside */
+BW.db.answers = async (cid, aid) => { const d = await ref("classes", cid, "answers", aid).get(); return d.exists ? (d.data().answers || []).map(BW.ansRow) : []; };
+BW.db.answersFor = async (cid, quizIds) => {   // every answer given on these quizzes in the class: [{ id, uid, quiz_id, finished_at, answers }]
+  const groups = []; for (let i = 0; i < quizIds.length; i += 30) groups.push(quizIds.slice(i, i + 30));
+  const snaps = await Promise.all(groups.map(g => col("classes", cid, "answers").where("quizId", "in", g).get()));
+  const out = snaps.flatMap(q => q.docs.map(d => ({ id: d.id, uid: d.data().uid, quiz_id: d.data().quizId, finished_at: ts(d.data().finishedAt), answers: (d.data().answers || []).map(BW.ansRow) })));
+  // results saved before the split kept their answers inside the result itself
+  (await BW.db.results(cid, quizIds)).filter(r => r.answers && !out.some(o => o.id === r.id)).forEach(r => out.push({ id: r.id, uid: r.uid, quiz_id: r.quiz_id, finished_at: r.finished_at, answers: r.answers }));
+  return out;
 };
 BW.db.studentResults = async (cid, sid) => (await col("classes", cid, "results").where("uid", "==", sid).orderBy("finishedAt", "desc").limit(60).get()).docs.map(resultRow);
 
@@ -129,7 +140,7 @@ BW.db.assignmentSummary = async cid => {   // one read of the tasks, members and
       avg_best: started.length ? started.reduce((s, r) => s + r.best, 0) / started.length : null, avg_items_done: rows.length ? rows.reduce((s, r) => s + r.items_done, 0) / rows.length : 0 }; });
 };
 BW.db.questionStats = async (cid, tid) => {
-  const task = await BW.db.task(cid, tid), res = (await BW.db.results(cid, task.quiz_ids)).filter(r => r.finished_at >= (task.created_at || ""));
+  const task = await BW.db.task(cid, tid), res = (await BW.db.answersFor(cid, task.quiz_ids)).filter(r => r.finished_at >= (task.created_at || ""));
   const per = {};
   res.forEach(r => r.answers.forEach(a => { const k = `${a.q_key}|${r.id}|${a.q_code}`;
     const p = per[k] = per[k] || { key: a.q_key, uid: r.uid, tries: 0, ftc: false, ms: 0, sample: a.q_text, type: a.q_type, topic: a.topic };
@@ -213,12 +224,9 @@ BW.db.postNotice = async ({ title, body, classIds, pinned }) => {
 BW.db.classNotices = async cid => (await col("classes", cid, "notices").orderBy("createdAt", "desc").limit(50).get()).docs.map(d => ({ id: d.id, ...d.data(), created_at: ts(d.data().createdAt) }));
 BW.db.deleteNotice = (cid, nid) => ref("classes", cid, "notices", nid).delete();
 BW.db.pinNotice = (cid, nid, pinned) => ref("classes", cid, "notices", nid).update({ pinned });
-BW.loadNotices = async () => {
-  const S = BW.S, byId = {};
-  const [lists, reads] = await Promise.all([Promise.all(S.classes.filter(c => !c.archived).map(c => BW.db.classNotices(c.id).then(ns => ns.map(n => ({ ...n, class_name: c.name }))).catch(() => []))),
-    col("users", S.user.id, "reads").get().catch(() => ({ docs: [] }))]);
-  const read = new Set(reads.docs.map(d => d.id));
-  lists.flat().forEach(n => { const x = byId[n.id] = byId[n.id] || { id: n.id, title: n.title, body: n.body, author_name: n.authorName, created_at: n.created_at, pinned: n.pinned, classes: [], read: read.has(n.id) };
+BW.buildNotices = (list, read) => {   // one entry per notice even when it was sent to several of the student's classes
+  const byId = {};
+  list.forEach(n => { const x = byId[n.id] = byId[n.id] || { id: n.id, title: n.title, body: n.body, author_name: n.authorName, created_at: n.created_at, pinned: n.pinned, classes: [], read: read.has(n.id) };
     x.classes.push(n.class_name); x.pinned = x.pinned || n.pinned; });
   return Object.values(byId).sort((a, b) => (b.pinned - a.pinned) || (b.created_at || "").localeCompare(a.created_at || ""));
 };
@@ -239,8 +247,10 @@ BW.db.deleteSelf = async password => {
   await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email, password));
   if (S.profile.role === "teacher") for (const c of BW.myClasses()) await BW.db.deleteClass(c.id);   // a teacher's classes, tasks and notices go with them
   for (const cid of S.profile.class_ids || []) {
-    const mine = await col("classes", cid, "results").where("uid", "==", u.uid).get().catch(() => ({ docs: [] }));
-    const b = BW.fs.batch(); mine.docs.forEach(d => b.delete(d.ref)); b.delete(ref("classes", cid, "members", u.uid)); await b.commit().catch(() => { });
+    const [mine, ans] = await Promise.all(["results", "answers"].map(sub => col("classes", cid, sub).where("uid", "==", u.uid).get().catch(() => ({ docs: [] }))));
+    const docs = [...mine.docs, ...ans.docs];
+    for (let i = 0; i < docs.length; i += 400) { const b = BW.fs.batch(); docs.slice(i, i + 400).forEach(d => b.delete(d.ref)); await b.commit().catch(() => { }); }
+    await ref("classes", cid, "members", u.uid).delete().catch(() => { });
   }
   for (const sub of ["attempts", "best", "badges", "daily", "reads"]) {
     const q = await col("users", u.uid, sub).get();

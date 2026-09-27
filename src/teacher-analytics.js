@@ -41,7 +41,8 @@ BW.bindTeachSearch = root => {
 
 /* ---------- answers table (shared by task reports and student pages) ---------- */
 BW.answersHTML = rows => {
-  if (!rows) return BW.loading;
+  if (rows === undefined) return BW.loading;
+  if (!rows) return `<p class="note err">Couldn't load these answers. Try again in a moment.</p>`;
   if (!rows.length) return `<p class="note">No question-by-question data for this attempt (it was saved before detailed tracking was added).</p>`;
   const code = rows.find(r => r.q_type === "code");
   if (code) { const d = code.detail || {};
@@ -57,10 +58,11 @@ BW.answersHTML = rows => {
       <td class="r num"><span class="tbar"><i style="width:${Math.max(4, r.ms / max * 100)}%"></i></span>${BW.fmtMs(r.ms)}</td></tr>`).join("")}
     </tbody></table></div>`;
 };
-BW.attemptList = (atts, openId) => atts.map(t => { const lab = BW.quizLabel(t.quiz_id), open = openId === t.id;
+BW.answersOf = (cid, t) => t.answers || BW.fetchOnce(`ans:${cid}:${t.id}`, () => BW.db.answers(cid, t.id));
+BW.attemptList = (atts, openId, cid) => atts.map(t => { const lab = BW.quizLabel(t.quiz_id), open = openId === t.id;
   return `<div class="att ${open ? "open" : ""}"><button class="att-head" data-att="${t.id}" aria-expanded="${open}"><span class="tt"><b>${E(lab.title)}</b><small class="muted">${E(lab.sub || "")} · ${BW.when(t.finished_at)}</small></span>
     <span class="num att-score ${+t.pct >= BW.PASS ? "good-t" : ""}">${BW.pct(t.pct)}</span><span class="num muted">${t.correct}/${t.total}</span><span class="num muted">${t.active_ms != null ? BW.fmtMs(t.active_ms) : "–"}</span>${I.down}</button>
-    ${open ? `<div class="att-body">${BW.answersHTML(t.answers || [])}</div>` : ""}</div>`; }).join("");
+    ${open ? `<div class="att-body">${BW.answersHTML(BW.answersOf(cid, t))}</div>` : ""}</div>`; }).join("");
 
 /* ---------- one task's report ---------- */
 BW.itemChip = (it, target) => { const l = BW.itemLabel(it.quiz_id), done = !!it.completed_at, st = done ? "good" : +it.tries ? "" : "muted";
@@ -93,7 +95,7 @@ BW.viewAssignment = ({ aid, cid }) => {
   <div class="panel att-list">${rows.map(r => { const [st, cls] = status(r), open = openS === r.student_id;
     return `<div class="att ${open ? "open" : ""}"><button class="att-head s" data-openstudent="${r.student_id}" aria-expanded="${open}"><span class="who">${BW.avatarHTML("av-sm", r)}${E(r.display_name)}</span><span class="chip-s ${cls}">${st}</span>
       <span class="num">${r.items_done}/${nItems} items</span><span class="num muted">${r.best != null ? BW.pct(r.best) + " avg" : "–"}</span><span class="muted">${r.last_at ? BW.when(r.last_at) : "–"}</span>${I.down}</button>
-      ${open ? `<div class="att-body"><div class="item-chips">${r.items.map(it => BW.itemChip(it, a.target_pct)).join("")}</div>${(() => { const atts = studentAtts(r.student_id); return atts === undefined ? BW.loading : !atts?.length ? `<p class="note">No attempts yet.</p>` : `<div class="att-list inner">${BW.attemptList(atts, BW.ui.openAttempt)}</div>`; })()}<button class="link" data-student="${r.student_id}">Open ${E(r.display_name.split(" ")[0])}'s full profile</button></div>` : ""}</div>`; }).join("") || `<p class="muted">No students in this class yet.</p>`}</div>
+      ${open ? `<div class="att-body"><div class="item-chips">${r.items.map(it => BW.itemChip(it, a.target_pct)).join("")}</div>${(() => { const atts = studentAtts(r.student_id); return atts === undefined ? BW.loading : !atts?.length ? `<p class="note">No attempts yet.</p>` : `<div class="att-list inner">${BW.attemptList(atts, BW.ui.openAttempt, cid)}</div>`; })()}<button class="link" data-student="${r.student_id}">Open ${E(r.display_name.split(" ")[0])}'s full profile</button></div>` : ""}</div>`; }).join("") || `<p class="muted">No students in this class yet.</p>`}</div>
   <div class="sec-head"><h2>Question breakdown</h2><span class="muted">Across every item, hardest first</span></div>${qsHTML}
   <div class="row-btns" style="margin-top:18px"><button class="cta ghost" data-act="csv">Export summary CSV</button><button class="cta ghost" data-act="anscsv">Export every answer (CSV)</button><button class="cta danger" data-act="deltask">Delete task</button></div>`;
 };
@@ -109,9 +111,10 @@ BW.bindAssignment = (root, { aid, cid }) => {
   root.querySelector("[data-act=anscsv]")?.addEventListener("click", async () => {
     const task = a(), people = Object.fromEntries((BW.cache["rep:" + aid].data || []).map(r => [r.student_id, r.display_name]));
     try {
-      const atts = (await BW.db.results(cid, task.quiz_ids)).filter(t => people[t.uid] && t.finished_at >= (task.created_at || ""));
+      const [ans, res] = await Promise.all([BW.db.answersFor(cid, task.quiz_ids), BW.db.results(cid, task.quiz_ids)]), pct = Object.fromEntries(res.map(r => [r.id, r.pct]));
+      const atts = ans.filter(t => people[t.uid] && t.finished_at >= (task.created_at || "")).sort((x, y) => (x.finished_at || "").localeCompare(y.finished_at || ""));
       BW.csv(`${safe(task.title)}_answers.csv`, [["Student", "Item", "Attempt finished", "Attempt score %", "Question code", "Type", "Topic", "Question", "Answer given", "Correct answer", "Correct", "Try", "Seconds"],
-        ...atts.flatMap(t => t.answers.map(r => [people[t.uid], BW.itemLabel(t.quiz_id).name, t.finished_at, Math.round(t.pct * 100), r.q_code, BW.TYPE_LABELS[r.q_type] || r.q_type, r.topic, r.q_text, r.answer, r.correct_answer, r.is_correct ? "Yes" : "No", r.try_no, (r.ms / 1000).toFixed(1)]))]);
+        ...atts.flatMap(t => t.answers.map(r => [people[t.uid], BW.itemLabel(t.quiz_id).name, t.finished_at, pct[t.id] != null ? Math.round(pct[t.id] * 100) : "", r.q_code, BW.TYPE_LABELS[r.q_type] || r.q_type, r.topic, r.q_text, r.answer, r.correct_answer, r.is_correct ? "Yes" : "No", r.try_no, (r.ms / 1000).toFixed(1)]))]);
     } catch (e) { BW.toast(BW.errMsg(e)); }
   });
   root.querySelector("[data-act=deltask]")?.addEventListener("click", () => BW.modal(`<h2>Delete this task?</h2><p class="muted" style="margin:8px 0 18px">Students' scores and answers stay; the task disappears from their list.</p><div class="row-btns"><button class="cta ghost" data-close>Cancel</button><button class="cta danger" id="yesDel">Delete</button></div>`,
@@ -161,7 +164,7 @@ BW.viewStudent = ({ sid, cid }) => {
     <section class="panel"><h3>Coding Lab</h3>${(() => { const codes = (atts || []).filter(t => t.quiz_id.startsWith("code.")), best = {}; codes.forEach(t => best[t.quiz_id] = Math.max(best[t.quiz_id] || 0, +t.pct));
       const ids = Object.keys(best); return ids.length ? `<p class="muted" style="margin-bottom:8px">${ids.filter(k => best[k] >= 1).length} solved · ${codes.length} submissions</p>` + ids.slice(0, 8).map(k => `<div class="row-line"><span class="tt"><b>${E(BW.findChallenge(k.slice(5))?.title || k)}</b></span><span class="num pc-chip" style="--v:${best[k].toFixed(2)}">${BW.pct(best[k])}</span></div>`).join("") : `<p class="muted">No code submitted yet.</p>`; })()}</section></div>
   <div class="sec-head"><h2>Every attempt</h2><div class="chips">${[["all", "All"], ["quiz", "Quizzes"], ["code", "Coding"]].map(([k, l]) => `<button class="chip ${filter === k ? "on" : ""}" data-attfilter="${k}">${l}</button>`).join("")}</div></div>
-  ${atts === undefined ? BW.loading : shown.length ? `<div class="panel att-list"><div class="att-cols muted"><span>Quiz</span><span>Score</span><span>Right</span><span>Time</span></div>${BW.attemptList(shown, BW.ui.openAttempt)}</div>` : `<div class="empty">No attempts yet.</div>`}`;
+  ${atts === undefined ? BW.loading : shown.length ? `<div class="panel att-list"><div class="att-cols muted"><span>Quiz</span><span>Score</span><span>Right</span><span>Time</span></div>${BW.attemptList(shown, BW.ui.openAttempt, cid)}</div>` : `<div class="empty">No attempts yet.</div>`}`;
 };
 BW.bindStudent = (root, { cid }) => {
   root.querySelectorAll("[data-att]").forEach(el => el.onclick = () => { BW.ui.openAttempt = BW.ui.openAttempt === el.dataset.att ? null : el.dataset.att; BW.render(); });

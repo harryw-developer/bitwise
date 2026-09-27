@@ -184,10 +184,10 @@ BW.viewResults = () => {
     <p class="muted" style="margin-top:6px">${msg}</p>
     <div class="res-stats">
       <div class="stat"><b class="num">${Q.firstRight}/${Q.finalTotal}</b><span>First time</span></div>
-      <div class="stat"><b class="num">${Q.saving ? "…" : r ? "+" + r.xp_gain : "–"}</b><span>XP earned</span></div>
+      <div class="stat"><b class="num">${Q.saving ? `<span class="dots" aria-label="Saving"><i></i><i></i><i></i></span>` : r ? "+" + r.xp_gain : "–"}</b><span>XP earned</span></div>
       <div class="stat"><b class="num">${Q.maxCombo}</b><span>Best combo</span></div>
     </div>
-    ${Q.saving ? `<p class="note">Saving your score…</p>` : Q.saveErr ? `<p class="note err">${E(Q.saveErr)}</p>` : r?.first_daily ? `<p class="note">Includes +30 XP Daily Challenge bonus.</p>` : ""}
+    ${Q.saving ? `<p class="note saving-note">${BW.bitLoader(4, true)} Saving your score…</p>` : Q.saveErr ? `<p class="note err">${E(Q.saveErr)}</p>` : r?.first_daily ? `<p class="note">Includes +30 XP Daily Challenge bonus.</p>` : ""}
     ${badges.length ? `<div class="new-badges"><h3>New badge${badges.length > 1 ? "s" : ""}</h3><div class="badge-grid">${badges.map(b => BW.badgeHTML(b, true)).join("")}</div></div>` : ""}
     <div style="display:grid;gap:10px;margin-top:18px">
       <button class="cta" data-act="again">${Q.mode === "boss" && !Q.victory ? "Rematch" : "Play again"}</button>

@@ -227,15 +227,25 @@ service cloud.firestore {
         allow delete: if teaches(cid);
       }
 
-      // copies of finished attempts, so teachers can analyse them (written by the student, must match their real attempt)
+      // copies of finished attempts, so teachers can analyse them (written by the student, must match their real attempt).
+      // The summary (results) is small so reports load fast; the answers are a separate document read only when needed.
       match /results/{aid} {
         function r() { return request.resource.data; }
         function a() { return get(/databases/$(db)/documents/users/$(uid())/attempts/$(aid)).data; }
         allow read: if signedIn() && (classOf(cid).teacherId == uid() || resource.data.uid == uid());
         allow create: if signedIn() && memberOf(cid) && r().uid == uid() && a().status == 'done'
-          && r().keys().hasOnly(['uid', 'displayName', 'quizId', 'assignmentId', 'total', 'correct', 'pct', 'xp', 'activeMs', 'finishedAt', 'answers'])
+          && r().keys().hasOnly(['uid', 'displayName', 'quizId', 'assignmentId', 'total', 'correct', 'pct', 'xp', 'activeMs', 'finishedAt', 'answered'])
           && r().quizId == a().quizId && r().assignmentId == a().assignmentId && r().total == a().total && r().correct == a().correct && r().pct == a().pct && r().xp == a().xp
-          && r().activeMs == a().activeMs && r().finishedAt == a().finishedAt && r().answers == a().answers;
+          && r().activeMs == a().activeMs && r().finishedAt == a().finishedAt && r().answered == a().answers.size();
+        allow delete: if signedIn() && (resource.data.uid == uid() || classOf(cid).teacherId == uid());
+      }
+      match /answers/{aid} {
+        function r() { return request.resource.data; }
+        function a() { return get(/databases/$(db)/documents/users/$(uid())/attempts/$(aid)).data; }
+        allow read: if signedIn() && (classOf(cid).teacherId == uid() || resource.data.uid == uid());
+        allow create: if signedIn() && memberOf(cid) && r().uid == uid() && a().status == 'done'
+          && r().keys().hasOnly(['uid', 'quizId', 'finishedAt', 'answers'])
+          && r().quizId == a().quizId && r().finishedAt == a().finishedAt && r().answers == a().answers;
         allow delete: if signedIn() && (resource.data.uid == uid() || classOf(cid).teacherId == uid());
       }
     }

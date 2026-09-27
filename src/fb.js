@@ -84,48 +84,90 @@ BW.api = {
   }
 };
 
-/* ---------- loading a signed-in person's world ---------- */
-BW.recentAttempts = async (n = 400) => (await col("users", BW.S.user.id, "attempts").where("status", "==", "done").orderBy("finishedAt", "desc").limit(n).get())
-  .docs.map(d => ({ id: d.id, ...d.data() }));
+/* ---------- loading a signed-in person's world ----------
+   Everything that doesn't depend on the profile starts at the same time as the profile, so a student's home page
+   needs three quick round trips and small downloads (attempt documents hold every answer, so only a few are fetched). */
+const attemptLite = d => { const x = d.data(); return { id: d.id, quizId: x.quizId, pct: x.pct, xp: x.xp, finishedAt: ts(x.finishedAt) }; };
+const quiet = p => p.catch(() => null);
+const classBundle = cid => Promise.all([quiet(ref("classes", cid).get()),
+  quiet(col("classes", cid, "tasks").get()), quiet(col("classes", cid, "notices").orderBy("createdAt", "desc").limit(50).get())]);
 BW.loadAll = async () => {
-  const S = BW.S, uid = S.user.id;
+  const S = BW.S, uid = S.user.id, mine = n => col("users", uid, n);
+  const early = Promise.all([mine("best").get(), mine("badges").get(),
+    mine("attempts").where("status", "==", "done").orderBy("finishedAt", "desc").limit(40).get(), quiet(mine("reads").get())]);
+  early.catch(() => { });
   const psnap = await ref("users", uid).get();
   if (!psnap.exists) fail(S.user.email?.endsWith("@" + BW.CONFIG.pupilDomain) ? "removed_from_school" : "no_profile");
-  S.profile = BW.toProfile(uid, psnap.data());
-  const [best, badges, recent] = await Promise.all([col("users", uid, "best").get(), col("users", uid, "badges").get(), BW.recentAttempts()]);
+  const profile = BW.toProfile(uid, psnap.data()), teacher = profile.role === "teacher";
+  const second = teacher ? Promise.all([col("classes").where("teacherId", "==", uid).get(), profile.school_id ? quiet(ref("schools", profile.school_id).get()) : null])
+    : Promise.all(profile.class_ids.map(classBundle));
+  const [[best, badges, hist, reads], got] = await Promise.all([early, second]);
+  S.profile = profile;
   S.best = Object.fromEntries(best.docs.map(d => [d.id, { pct: +d.data().pct, tries: d.data().tries, last: ts(d.data().lastAt) }]));
   S.badges = Object.fromEntries(badges.docs.map(d => [d.id, ts(d.data().earnedAt)]));
-  S.recent = recent;
-  S.hist = recent.slice(0, 40).map(a => ({ quiz_id: a.quizId, pct: a.pct, xp: a.xp, finished_at: ts(a.finishedAt) }));
-  if (S.profile.role === "teacher") {
-    const [cls, school] = await Promise.all([col("classes").where("teacherId", "==", uid).get(), S.profile.school_id ? ref("schools", S.profile.school_id).get() : null]);
+  S.hist = hist.docs.map(attemptLite).map(a => ({ quiz_id: a.quizId, pct: a.pct, xp: a.xp, finished_at: a.finishedAt }));
+  S.loadedAt = Date.now();
+  if (teacher) {
+    const [cls, school] = got;
     S.classes = cls.docs.map(d => BW.toClass(d.id, d.data())).sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
     S.school = school?.exists ? { id: school.id, ...school.data(), created_at: ts(school.data().createdAt) } : null;
-    S.tasks = []; S.notices = [];
-  } else {
-    const got = await Promise.all(S.profile.class_ids.map(cid => ref("classes", cid).get().catch(() => null)));
-    S.classes = got.filter(g => g?.exists).map(g => BW.toClass(g.id, g.data()));
-    S.school = null;
-    [S.tasks, S.notices] = await Promise.all([BW.computeTasks(), BW.loadNotices()]);
+    S.rawTasks = []; S.tasks = []; S.notices = []; S.taskAtts = {};
+    return;
   }
+  S.school = null;
+  S.classes = got.filter(([c]) => c?.exists).map(([c]) => BW.toClass(c.id, c.data()));
+  const live = new Set(S.classes.filter(c => !c.archived).map(c => c.id)), name = cid => S.classes.find(c => c.id === cid)?.name || "";
+  S.rawTasks = got.flatMap(([c, t]) => c?.exists && live.has(c.id) && t ? t.docs.map(d => ({ ...BW.toTask(d.id, c.id, d.data()), class_name: name(c.id) })) : []);
+  S.notices = BW.buildNotices(got.flatMap(([c, , n]) => c?.exists && live.has(c.id) && n ? n.docs.map(d => ({ id: d.id, ...d.data(), created_at: ts(d.data().createdAt), class_name: name(c.id) })) : []),
+    new Set((reads?.docs || []).map(d => d.id)));
+  S.taskAtts = await BW.loadTaskAttempts(S.rawTasks);
+  S.tasks = BW.buildTasks();
 };
-
-/* the student's tasks across their classes, with progress on every item (same shape as before) */
-BW.computeTasks = async () => {
-  const S = BW.S, live = S.classes.filter(c => !c.archived);
-  const lists = await Promise.all(live.map(c => col("classes", c.id, "tasks").get().then(q => q.docs.map(d => ({ ...BW.toTask(d.id, c.id, d.data()), class_name: c.name }))).catch(() => [])));
-  const done = S.recent || [];
-  return lists.flat().map(t => {
+/* attempts on the items of the student's tasks (only since each task was set), fetched 30 quizzes at a time */
+BW.loadTaskAttempts = async tasks => {
+  const since = {};
+  tasks.forEach(t => t.quiz_ids.forEach(q => { const c = t.created_at || "2000-01-01T00:00:00.000Z"; if (!since[q] || c < since[q]) since[q] = c; }));
+  const ids = Object.keys(since), out = Object.fromEntries(ids.map(q => [q, []]));
+  const groups = []; for (let i = 0; i < ids.length; i += 30) groups.push(ids.slice(i, i + 30));
+  await Promise.all(groups.map(async g => {
+    const from = new Date(g.map(q => since[q]).sort()[0]);
+    const snap = await col("users", BW.S.user.id, "attempts").where("quizId", "in", g).where("finishedAt", ">=", from).orderBy("finishedAt", "desc").limit(500).get();
+    snap.docs.map(attemptLite).forEach(a => out[a.quizId].push(a));
+  }));
+  return out;
+};
+/* the student's tasks with progress on every item, worked out locally */
+BW.buildTasks = () => {
+  const S = BW.S, atts = S.taskAtts || {};
+  return (S.rawTasks || []).map(t => {
     const since = t.created_at || "";
-    const items = t.quiz_ids.map(q => { const mine = done.filter(a => a.quizId === q && ts(a.finishedAt) >= since);
-      const passed = mine.filter(a => a.pct * 100 >= t.target_pct).map(a => ts(a.finishedAt)).sort();
+    const items = t.quiz_ids.map(q => { const mine = (atts[q] || []).filter(a => a.finishedAt >= since);
+      const passed = mine.filter(a => a.pct * 100 >= t.target_pct).map(a => a.finishedAt).sort();
       return { quiz_id: q, best: mine.length ? Math.max(...mine.map(a => a.pct)) : null, tries: mine.length, completed_at: passed[0] || null }; });
     const itemsDone = items.filter(i => i.completed_at).length, tries = items.reduce((s, i) => s + i.tries, 0);
     return { ...t, items, items_done: itemsDone, tries, best: tries ? items.reduce((s, i) => s + (i.best || 0), 0) / items.length : null,
       completed_at: itemsDone === items.length ? items.map(i => i.completed_at).sort().pop() : null };
   }).sort((a, b) => (a.due_at || "9999").localeCompare(b.due_at || "9999") || (b.created_at || "").localeCompare(a.created_at || ""));
 };
-BW.refreshTasks = async () => { if (BW.isTeacher()) return; BW.S.recent = await BW.recentAttempts(); BW.S.tasks = await BW.computeTasks(); };
+BW.computeTasks = async () => { await BW.refreshStudent(true); return BW.S.tasks; };
+BW.refreshTasks = async () => { if (!BW.isTeacher()) BW.S.tasks = BW.buildTasks(); };   // after a quiz: no downloads needed
+/* new homework and notices while the app is open: re-check at most every couple of minutes */
+BW.refreshStudent = async force => {
+  const S = BW.S; if (BW.isTeacher() || !S.profile || (!force && Date.now() - (S.loadedAt || 0) < 120000)) return false;
+  S.loadedAt = Date.now();
+  const [psnap, reads] = await Promise.all([ref("users", S.user.id).get(), quiet(col("users", S.user.id, "reads").get())]);
+  if (!psnap.exists) return false;
+  const profile = BW.toProfile(S.user.id, psnap.data()), got = await Promise.all(profile.class_ids.map(classBundle));   // picks up classes a teacher has just added
+  S.profile = profile;
+  S.classes = got.filter(([c]) => c?.exists).map(([c]) => BW.toClass(c.id, c.data()));
+  const live = new Set(S.classes.filter(c => !c.archived).map(c => c.id)), name = cid => S.classes.find(c => c.id === cid)?.name || "";
+  S.rawTasks = got.flatMap(([c, t]) => c?.exists && live.has(c.id) && t ? t.docs.map(d => ({ ...BW.toTask(d.id, c.id, d.data()), class_name: name(c.id) })) : []);
+  S.notices = BW.buildNotices(got.flatMap(([c, , n]) => c?.exists && live.has(c.id) && n ? n.docs.map(d => ({ id: d.id, ...d.data(), created_at: ts(d.data().createdAt), class_name: name(c.id) })) : []),
+    new Set((reads?.docs || []).map(d => d.id)));
+  S.taskAtts = await BW.loadTaskAttempts(S.rawTasks);
+  S.tasks = BW.buildTasks();
+  return true;
+};
 
 /* ---------- attempts: start, and finish with the exact XP the rules will check ---------- */
 BW.quizMult = q => /\.0$/.test(q) ? 1.0 : /\.1$/.test(q) ? 1.2 : /\.2$/.test(q) ? 1.5 : /\.3$/.test(q) ? 2.0 : /\.boss$/.test(q) ? 1.8 : /^daily\./.test(q) ? 1.5 : /^code\./.test(q) ? 1.5 : 1.2;
@@ -137,38 +179,44 @@ BW.startAttempt = async (quizId, assignmentId) => {
 };
 BW.finishAttempt = async ({ id, total, correct, maxCombo = 0, answers = [], activeMs = 0 }) => {
   const S = BW.S, uid = S.user.id, attemptRef = ref("users", uid, "attempts", id);
-  const att = await attemptRef.get(); if (!att.exists) fail("not_found");
+  // read everything the score depends on in one go (we already know which quiz this attempt is for)
+  const reads = q => Promise.all([ref("users", uid, "best", q).get(), q.startsWith("daily.") ? ref("users", uid, "daily", q).get() : null]);
+  const hint = BW.openAttempts?.[id];
+  let [att, prof, [bestSnap, dailySnap]] = await Promise.all([attemptRef.get(), ref("users", uid).get(), hint ? reads(hint) : [null, null]]);
+  if (!att.exists) fail("not_found");
   const quizId = att.data().quizId, mult = BW.quizMult(quizId), pct = correct / total, pass = correct * 5 >= total * 4;
-  const [prof, bestSnap] = await Promise.all([ref("users", uid).get(), ref("users", uid, "best", quizId).get()]);
+  if (quizId !== hint) [bestSnap, dailySnap] = await reads(quizId);
   const p = prof.data(), prevBest = bestSnap.exists ? bestSnap.data().pct : 0, prevTries = bestSnap.exists ? bestSnap.data().tries : 0;
   let xp, firstDaily = false;
   if (quizId.startsWith("code.")) xp = pct > prevBest ? Math.round((pct - prevBest) * total * 10 * mult) + (pass && prevBest < 0.8 ? Math.round(20 * mult) : 0) : 0;
   else {
     xp = Math.round(correct * 10 * mult) + (pass ? Math.round(20 * mult) : 0) + (maxCombo >= 3 ? Math.min(maxCombo, 20) * 2 : 0);
-    if (quizId.startsWith("daily.") && !(await ref("users", uid, "daily", quizId).get()).exists) { firstDaily = true; xp += 30; }
+    if (dailySnap && !dailySnap.exists) { firstDaily = true; xp += 30; }
   }
   const wk = BW.weekKey(), today = utcDay(new Date());
   const lastDay = p.lastDay ? utcDay(p.lastDay.toDate()) : null, yesterday = utcDay(new Date(Date.now() - 864e5));
   const streakGuess = lastDay === today ? p.streak : lastDay === yesterday ? p.streak + 1 : 1;
   // the server's date decides the streak; try our best guess first, then the other possibilities (clock drift around midnight)
   const candidates = [...new Set([streakGuess, p.streak, p.streak + 1, 1])];
-  let lastErr;
+  let lastErr, saved;
   for (const streak of candidates) {
     const b = BW.fs.batch();
     b.update(attemptRef, { status: "done", finishedAt: FV.serverTimestamp(), total, correct, pct, xp, maxCombo, activeMs: Math.max(0, Math.round(activeMs)), answers: answers.slice(0, 150) });
     if (firstDaily) b.set(ref("users", uid, "daily", quizId), { at: FV.serverTimestamp() });
     b.set(ref("users", uid, "best", quizId), { pct: Math.max(pct, prevBest), tries: prevTries + 1, lastAt: FV.serverTimestamp(), attempt: id });
-    b.update(ref("users", uid), { xp: (p.xp || 0) + xp, weekXp: p.weekKey === wk ? (p.weekXp || 0) + xp : xp, weekKey: wk, streak,
-      bestStreak: Math.max(p.bestStreak || 0, streak), lastDay: FV.serverTimestamp(), lastAttempt: id });
-    try { await b.commit(); lastErr = null; break; } catch (e) { lastErr = e; if (e.code !== "permission-denied") break; }
+    const upd = { xp: (p.xp || 0) + xp, weekXp: p.weekKey === wk ? (p.weekXp || 0) + xp : xp, weekKey: wk, streak, bestStreak: Math.max(p.bestStreak || 0, streak) };
+    b.update(ref("users", uid), { ...upd, lastDay: FV.serverTimestamp(), lastAttempt: id });
+    try { await b.commit(); lastErr = null; saved = upd; break; } catch (e) { lastErr = e; if (e.code !== "permission-denied") break; }
   }
   if (lastErr) {
     const tooFast = (Date.now() - att.data().startedAt.toDate()) < total * 1500 + 2000;
     fail(tooFast ? "too_fast" : lastErr.code || "permission-denied");
   }
-  const after = (await ref("users", uid).get()).data();
+  const after = { ...p, ...saved, lastDay: firebase.firestore.Timestamp.now() };   // what the server now holds (no need to read it back)
   S.profile = BW.toProfile(uid, after);
   S.best[quizId] = { pct: Math.max(pct, prevBest), tries: prevTries + 1, last: new Date().toISOString() };
+  if (S.taskAtts?.[quizId]) S.taskAtts[quizId].unshift({ id, quizId, pct, xp, finishedAt: new Date().toISOString() });
+  delete BW.openAttempts?.[id];
   const badges = BW.newBadges({ quizId, pct, pass, total, correct, maxCombo, firstDaily, assignmentId: att.data().assignmentId });
   BW.shareResult(id, badges).catch(e => console.warn("class copy", e));   // leaderboards, teacher analytics, badges
   return { xp_gain: xp, xp: after.xp, week_xp: after.weekXp, streak: after.streak, pct, pass, first_daily: firstDaily, badges };
@@ -201,7 +249,8 @@ BW.shareResult = async (attemptId, badges) => {
     b.update(ref("classes", cid, "members", uid), { displayName: p.displayName, avatarColor: p.avatarColor, xp: p.xp, weekXp: p.weekXp, weekKey: p.weekKey,
       streak: p.streak, lastDay: p.lastDay, medals, quizzes: FV.increment(1), lastActive: FV.serverTimestamp(), ...extra });
     b.set(ref("classes", cid, "results", attemptId), { uid, displayName: p.displayName, quizId: a.quizId, assignmentId: a.assignmentId || null, total: a.total,
-      correct: a.correct, pct: a.pct, xp: a.xp, activeMs: a.activeMs, finishedAt: a.finishedAt, answers: a.answers });
+      correct: a.correct, pct: a.pct, xp: a.xp, activeMs: a.activeMs, finishedAt: a.finishedAt, answered: (a.answers || []).length });
+    b.set(ref("classes", cid, "answers", attemptId), { uid, quizId: a.quizId, finishedAt: a.finishedAt, answers: a.answers || [] });
     return b.commit().catch(e => console.warn("class", cid, e.code)); }));
   if (badges.length) { const b = BW.fs.batch();
     badges.forEach(k => { b.set(ref("users", uid, "badges", k), { earnedAt: FV.serverTimestamp() }); S.badges[k] = new Date().toISOString(); });

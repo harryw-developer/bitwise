@@ -8,7 +8,7 @@ BW.fetchOnce = (key, fn) => {
 };
 BW.cacheErr = key => BW.cache[key]?.err;
 BW.invalidate = (...prefixes) => Object.keys(BW.cache).forEach(k => prefixes.some(p => k.startsWith(p)) && delete BW.cache[k]);
-BW.loading = `<div class="empty">Loading…</div>`;
+BW.loading = `<div class="skel" role="status" aria-label="Loading"><i></i><i></i><i></i><span class="skel-bits">${BW.bitLoader(5, true)}</span></div>`;
 BW.classById = id => BW.S.classes.find(c => c.id === id);
 BW.classCover = c => BW.cover("class" + c.id, ["#2F9BB3", "#6C5CE7", "#F15BB5", "#FB5607", "#1F9D62", "#3A86FF"][parseInt(c.id.slice(0, 2), 16) % 6], "#F0A35E", ["nodes", "bits", "circuit", "waves"][parseInt(c.id.slice(2, 4), 16) % 4], 640, 360);
 BW.csv = (name, rows) => {

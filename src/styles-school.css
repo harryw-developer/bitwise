@@ -48,3 +48,48 @@
   .rail .nav-btn svg{width:21px;height:21px}
   .dir-bar .cta{width:100%}
 }
+
+/* ---------- navigation rail: labels float above the page, and the rail always fits the window ---------- */
+.rail{z-index:15}
+@media (min-width:761px){.rail{height:calc(100dvh - 32px)}}
+@media (min-width:761px) and (max-height:780px){
+  .rail{gap:4px;padding:14px 0}
+  .rail .logo{width:40px;height:40px;margin-bottom:6px;font-size:12px}
+  .rail .nav-btn{width:46px;height:46px}
+  .rail .nav-btn svg{width:21px;height:21px}
+}
+@media (min-width:761px) and (max-height:600px){
+  .rail{gap:2px;padding:10px 0}
+  .rail .logo{display:none}
+  .rail .nav-btn{width:40px;height:40px}
+  .rail .nav-btn svg{width:19px;height:19px}
+}
+
+/* ---------- loading animations ---------- */
+.bitload{display:inline-flex;gap:6px}
+.bitload > span{width:30px;height:40px;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;background:var(--card);box-shadow:var(--shadow-sm)}
+.bitload b{flex:none;height:40px;display:grid;place-items:center;font-family:var(--mono);font-size:20px;font-weight:700;color:var(--muted)}
+.bitload b + b{background:linear-gradient(135deg,#F0A35E,#2F9BB3);color:#16181B}
+.bitload > span > b:first-child{animation:bitflip var(--d) steps(1,end) infinite}
+@keyframes bitflip{0%{margin-top:0}50%{margin-top:-40px}}
+.bitload.sm{gap:3px;vertical-align:middle}
+.bitload.sm > span{width:14px;height:18px;border-radius:5px;box-shadow:none;background:var(--card-2)}
+.bitload.sm b{height:18px;font-size:10px}
+.bitload.sm > span > b:first-child{animation-name:bitflip-sm}
+@keyframes bitflip-sm{0%{margin-top:0}50%{margin-top:-18px}}
+.splash .bitload{animation:splash-in .4s ease both}
+.splash-msg{animation:splash-in .4s .15s ease both}
+@keyframes splash-in{from{opacity:0;transform:translateY(6px)}}
+
+.skel{display:grid;gap:10px;position:relative;padding-bottom:30px}
+.skel i{display:block;height:58px;border-radius:var(--r-md);background:linear-gradient(90deg,var(--card) 25%,var(--card-2) 50%,var(--card) 75%);background-size:300% 100%;animation:shimmer 1.3s linear infinite}
+.skel i:nth-child(2){width:86%;animation-delay:.12s}.skel i:nth-child(3){width:64%;animation-delay:.24s}
+.skel-bits{position:absolute;left:0;bottom:0}
+@keyframes shimmer{from{background-position:100% 0}to{background-position:-50% 0}}
+
+.dots{display:inline-flex;gap:4px;align-items:center;height:1em}
+.dots i{width:7px;height:7px;border-radius:50%;background:currentColor;animation:dot 1s ease-in-out infinite}
+.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+@keyframes dot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-4px)}}
+.saving-note{display:flex;align-items:center;gap:8px}
+.py-status.loading::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--warn);margin-right:6px;vertical-align:1px;animation:dot 1s ease-in-out infinite}

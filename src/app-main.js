@@ -29,6 +29,7 @@ BW.go = (name, params = {}) => {
   BW.route = { name, params };
   BW.render();
   if (name !== prev.name || name === "quiz") window.scrollTo({ top: 0 });
+  if (["home", "tasks", "messages"].includes(name)) BW.refreshStudent?.().then(changed => { if (changed && BW.route.name === name) BW.render(); }).catch(() => { });
 };
 BW.back = () => { BW.route = BW.stack.pop() || { name: "home", params: {} }; BW.render(); window.scrollTo({ top: 0 }); };
 
@@ -111,7 +112,7 @@ let entering = null;
 BW.enter = (user, force) => {
   if (!force && entering === user.uid) return; entering = user.uid;
   BW.S.user = { id: user.uid, email: user.email };
-  document.getElementById("view").innerHTML = `<div class="splash"><div class="logo big">01</div><p class="muted">Loading your progress…</p></div>`;
+  document.getElementById("view").innerHTML = BW.splash("Loading your progress…");
   BW.loadAll().then(() => { BW.stack = []; BW.route = { name: "home", params: {} }; BW.render(); })
     .catch(e => { entering = null;
       const removed = e.code === "removed_from_school", missing = e.code === "no_profile";

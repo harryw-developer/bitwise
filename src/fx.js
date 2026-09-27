@@ -47,6 +47,10 @@ BW.confetti = (n = 140) => {
   })();
 };
 
+/* loading animation: little binary counter (the right-hand bit flips fastest) */
+BW.bitLoader = (n = 6, small) => `<span class="bitload ${small ? "sm" : ""}" aria-hidden="true">${Array.from({ length: n }, (_, i) => `<span style="--d:${(0.5 * 2 ** (n - 1 - i)).toFixed(1)}s"><b>0</b><b>1</b></span>`).join("")}</span>`;
+BW.splash = text => `<div class="splash" role="status">${BW.bitLoader()}<p class="muted splash-msg">${text}</p></div>`;
+
 BW.modal = (html, onBind) => {
   document.querySelector(".modal-wrap")?.remove();
   const w = document.createElement("div"); w.className = "modal-wrap"; w.setAttribute("role", "dialog"); w.setAttribute("aria-modal", "true");
