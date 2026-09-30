@@ -3,6 +3,9 @@
 BW.fbApp = firebase.initializeApp(BW.CONFIG.firebase);
 BW.auth = firebase.auth();
 BW.fs = firebase.firestore();
+// plain HTTP requests instead of a streaming connection: school proxies, filters and some browsers stall the stream,
+// which left the loading screen spinning until a refresh
+BW.fs.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false });
 const FV = firebase.firestore.FieldValue;
 const col = (...p) => BW.fs.collection(p.join("/"));
 const ref = (...p) => BW.fs.doc(p.join("/"));
@@ -99,8 +102,24 @@ BW.api = {
    needs three quick round trips and small downloads (attempt documents hold every answer, so only a few are fetched). */
 const attemptLite = d => { const x = d.data(); return { id: d.id, quizId: x.quizId, pct: x.pct, xp: x.xp, finishedAt: ts(x.finishedAt) }; };
 const quiet = p => p.catch(() => null);
-const classBundle = cid => Promise.all([quiet(ref("classes", cid).get()),
-  quiet(col("classes", cid, "tasks").get()), quiet(col("classes", cid, "notices").orderBy("createdAt", "desc").limit(50).get())]);
+const classBundle = cid => Promise.all([quiet(ref("classes", cid).get()), quiet(col("classes", cid, "tasks").get()),
+  quiet(col("classes", cid, "notices").orderBy("createdAt", "desc").limit(50).get()), quiet(col("classes", cid, "resubs").where("uid", "==", BW.S.user.id).get())]);
+/* a student's classes, tasks, notices and redo requests from the per-class downloads */
+const applyStudent = async (got, reads) => {
+  const S = BW.S;
+  S.classes = got.filter(([c]) => c?.exists).map(([c]) => BW.toClass(c.id, c.data()));
+  const live = new Set(S.classes.filter(c => !c.archived).map(c => c.id)), name = cid => S.classes.find(c => c.id === cid)?.name || "", ok = c => c?.exists && live.has(c.id);
+  S.rawTasks = got.flatMap(([c, t]) => ok(c) && t ? t.docs.map(d => ({ ...BW.toTask(d.id, c.id, d.data()), class_name: name(c.id) })) : []);
+  S.resubs = Object.fromEntries(got.flatMap(([c, , , r]) => ok(c) && r ? r.docs.map(d => [d.data().taskId, { ...BW.resubRow(d), class_name: name(c.id) }]) : []));
+  const read = new Set((reads?.docs || []).map(d => d.id));
+  const redo = Object.values(S.resubs).filter(r => S.rawTasks.some(t => t.id === r.task_id)).map(r => { const id = `redo_${r.id}_${Date.parse(r.requested_at) || 0}`;
+    return { id, title: `Please redo: ${r.task_title}`, body: r.reason || "Your teacher has asked you to have another go at this task.", author_name: r.teacher_name, created_at: r.requested_at,
+      pinned: false, classes: [r.class_name], read: read.has(id), redo: r.task_id }; });
+  S.notices = [...redo, ...BW.buildNotices(got.flatMap(([c, , n]) => ok(c) && n ? n.docs.map(d => ({ id: d.id, ...d.data(), created_at: ts(d.data().createdAt), class_name: name(c.id) })) : []), read)]
+    .sort((a, b) => (b.pinned - a.pinned) || (b.created_at || "").localeCompare(a.created_at || ""));
+  S.taskAtts = await BW.loadTaskAttempts(S.rawTasks);
+  S.tasks = BW.buildTasks();
+};
 BW.loadAll = async () => {
   const S = BW.S, uid = S.user.id, mine = n => col("users", uid, n);
   const early = Promise.all([mine("best").get(), mine("badges").get(),
@@ -125,13 +144,7 @@ BW.loadAll = async () => {
     return;
   }
   S.school = null;
-  S.classes = got.filter(([c]) => c?.exists).map(([c]) => BW.toClass(c.id, c.data()));
-  const live = new Set(S.classes.filter(c => !c.archived).map(c => c.id)), name = cid => S.classes.find(c => c.id === cid)?.name || "";
-  S.rawTasks = got.flatMap(([c, t]) => c?.exists && live.has(c.id) && t ? t.docs.map(d => ({ ...BW.toTask(d.id, c.id, d.data()), class_name: name(c.id) })) : []);
-  S.notices = BW.buildNotices(got.flatMap(([c, , n]) => c?.exists && live.has(c.id) && n ? n.docs.map(d => ({ id: d.id, ...d.data(), created_at: ts(d.data().createdAt), class_name: name(c.id) })) : []),
-    new Set((reads?.docs || []).map(d => d.id)));
-  S.taskAtts = await BW.loadTaskAttempts(S.rawTasks);
-  S.tasks = BW.buildTasks();
+  await applyStudent(got, reads);
 };
 /* attempts on the items of the student's tasks (only since each task was set), fetched 30 quizzes at a time */
 BW.loadTaskAttempts = async tasks => {
@@ -150,12 +163,12 @@ BW.loadTaskAttempts = async tasks => {
 BW.buildTasks = () => {
   const S = BW.S, atts = S.taskAtts || {};
   return (S.rawTasks || []).map(t => {
-    const since = t.created_at || "";
-    const items = t.quiz_ids.map(q => { const mine = (atts[q] || []).filter(a => a.finishedAt >= since);
+    const r = S.resubs?.[t.id], sinceOf = q => r && r.quiz_ids.includes(q) && (r.requested_at || "") > (t.created_at || "") ? r.requested_at : t.created_at || "";
+    const items = t.quiz_ids.map(q => { const since = sinceOf(q), mine = (atts[q] || []).filter(a => a.finishedAt >= since);
       const passed = mine.filter(a => a.pct * 100 >= t.target_pct).map(a => a.finishedAt).sort();
       return { quiz_id: q, best: mine.length ? Math.max(...mine.map(a => a.pct)) : null, tries: mine.length, completed_at: passed[0] || null }; });
     const itemsDone = items.filter(i => i.completed_at).length, tries = items.reduce((s, i) => s + i.tries, 0);
-    return { ...t, items, items_done: itemsDone, tries, best: tries ? items.reduce((s, i) => s + (i.best || 0), 0) / items.length : null,
+    return { ...t, resub: r || null, items, items_done: itemsDone, tries, best: tries ? items.reduce((s, i) => s + (i.best || 0), 0) / items.length : null,
       completed_at: itemsDone === items.length ? items.map(i => i.completed_at).sort().pop() : null };
   }).sort((a, b) => (a.due_at || "9999").localeCompare(b.due_at || "9999") || (b.created_at || "").localeCompare(a.created_at || ""));
 };
@@ -169,13 +182,7 @@ BW.refreshStudent = async force => {
   if (!psnap.exists) return false;
   const profile = BW.toProfile(S.user.id, psnap.data()), got = await Promise.all(profile.class_ids.map(classBundle));   // picks up classes a teacher has just added
   S.profile = profile;
-  S.classes = got.filter(([c]) => c?.exists).map(([c]) => BW.toClass(c.id, c.data()));
-  const live = new Set(S.classes.filter(c => !c.archived).map(c => c.id)), name = cid => S.classes.find(c => c.id === cid)?.name || "";
-  S.rawTasks = got.flatMap(([c, t]) => c?.exists && live.has(c.id) && t ? t.docs.map(d => ({ ...BW.toTask(d.id, c.id, d.data()), class_name: name(c.id) })) : []);
-  S.notices = BW.buildNotices(got.flatMap(([c, , n]) => c?.exists && live.has(c.id) && n ? n.docs.map(d => ({ id: d.id, ...d.data(), created_at: ts(d.data().createdAt), class_name: name(c.id) })) : []),
-    new Set((reads?.docs || []).map(d => d.id)));
-  S.taskAtts = await BW.loadTaskAttempts(S.rawTasks);
-  S.tasks = BW.buildTasks();
+  await applyStudent(got, reads);
   return true;
 };
 

@@ -20,9 +20,11 @@ require("fs").writeFileSync("build/data-code.gen.js", "(() => {\nBW.CODE = " + J
 
 # 2) CSS + JS bundles
 cat src/styles.css src/styles-game.css src/styles-code.css src/styles-library.css src/styles-school.css > "$OUT/app.css"
-JS="src/config.js src/core.js src/fx.js src/gen.js src/data-1.js src/data-2.js src/data-3.js src/data-4.js src/data-5.js src/data-6.js src/gen-2.js src/data-interactive.js build/data-code.gen.js src/widgets.js src/fb.js src/fb-teacher.js src/app-state.js src/quiz-build.js src/quiz-play.js src/app-views.js src/app-student.js src/teacher-home.js src/teacher-class.js src/teacher-analytics.js src/teacher-library.js src/school.js src/app-board.js src/ide.js src/app-auth.js src/app-main.js"
+JS="src/config.js src/core.js src/fx.js src/gen.js src/data-1.js src/data-2.js src/data-3.js src/data-4.js src/data-5.js src/data-6.js src/gen-2.js src/data-interactive.js build/data-code.gen.js src/widgets.js src/fb.js src/fb-teacher.js src/app-state.js src/quiz-build.js src/quiz-play.js src/app-views.js src/app-student.js src/teacher-home.js src/teacher-class.js src/teacher-analytics.js src/teacher-library.js src/teacher-progress.js src/school.js src/app-board.js src/ide.js src/app-auth.js src/app-main.js"
 { echo '"use strict";'; for f in $JS; do echo "/* ---- $f ---- */"; cat "$f"; echo; done; } | sed "s/__VER__/$VER/g" > "$OUT/app.js"
 if grep -q -e 'solution:' -e '"solution":' "$OUT/app.js"; then echo "ERROR: a model solution leaked into app.js"; exit 1; fi
+
+cp src/boot.js "$OUT/boot.js"
 
 # 3) Python worker with the marking harness embedded
 { printf 'const HARNESS = '; node -e 'console.log(JSON.stringify(require("fs").readFileSync("src/harness.py", "utf8")).replace(/[\u0080-\uffff]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")) + ";")'; cat src/py-worker.js; } > "$OUT/py-worker.js"
@@ -45,6 +47,7 @@ cat > "$OUT/index.html" <<EOF
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
 <link rel="stylesheet" href="$CM/codemirror.min.css" integrity="sha384-zaeBlB/vwYsDRSlFajnDd7OydJ0cWk+c2OWybl3eSUf6hW2EbhlCsQPqKr3gkznT" crossorigin="anonymous">
 <link rel="stylesheet" href="app.css?v=$VER">
+<script src="boot.js?v=$VER"></script>
 </head>
 <body>
 $(cat src/markup.html)

@@ -37,6 +37,7 @@ BW.bindClass = (root, { cid }) => {
     (w, close) => w.querySelector("#yesCode").onclick = async () => { try { c.join_code = await BW.api.rpc("regenerate_code", { p_class: cid }); close(); BW.render(); } catch (e) { BW.toast(BW.errMsg(e)); } }));
   on("[data-act=openlib]", () => { BW.lib.cid = cid; BW.go("library"); });
   on("[data-assign]", el => BW.go("assignment", { aid: el.dataset.assign, cid }));
+  on("[data-cell]", el => { const [tid, sid] = el.dataset.cell.split("|"); BW.openCell(c, tid, sid); });
   on("[data-settask]", el => BW.newTaskDialog({ items: [el.dataset.settask + ".1"], cid }));
   on("[data-board]", el => { BW.boardTab = el.dataset.board; BW.render(); });
   /* students */

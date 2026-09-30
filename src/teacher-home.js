@@ -52,9 +52,9 @@ BW.bindTeach = root => {
 /* ---------- class page ---------- */
 BW.viewClass = ({ cid }) => {
   const c = BW.classById(cid); if (!c) return `<div class="empty">Class not found.</div>`;
-  const tab = BW.ui.classTab || "tasks";
-  const tabs = [["tasks", "Tasks"], ["students", "Students"], ["notices", "Notices"], ["insights", "Insights"], ["board", "Leaderboard"], ["settings", "Settings"]];
-  const body = { tasks: BW.classTasks, students: BW.classStudents, notices: BW.classNoticesTab, insights: BW.classInsights, board: BW.classBoard, settings: BW.classSettings }[tab](c);
+  const tab = BW.ui.classTab || "progress";
+  const tabs = [["progress", "Progress"], ["tasks", "Tasks"], ["students", "Students"], ["notices", "Notices"], ["insights", "Insights"], ["board", "Leaderboard"], ["settings", "Settings"]];
+  const body = { progress: BW.classProgress, tasks: BW.classTasks, students: BW.classStudents, notices: BW.classNoticesTab, insights: BW.classInsights, board: BW.classBoard, settings: BW.classSettings }[tab](c);
   return `<div class="class-hero" style="background-image:${BW.classCover(c)}"><button class="back" data-back aria-label="Back">${I.back}</button>
     <div class="ch-info"><h1>${E(c.name)}</h1><div class="joincode"><small>Join code</small><b class="mono">${E(c.join_code)}</b><button class="glass" data-copy="${E(c.join_code)}">Copy</button><button class="glass" data-act="newcode">New code</button></div></div></div>
   <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button class="tab ${tab === k ? "on" : ""}" data-ctab="${k}" role="tab" aria-selected="${tab === k}">${l}</button>`).join("")}</div>

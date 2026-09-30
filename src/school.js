@@ -154,7 +154,7 @@ BW.viewMessages = () => {
   ${unread ? `<div class="row-btns" style="margin:14px 0"><button class="cta ghost small" data-act="readall">Mark all as read</button></div>` : ""}
   ${list.length ? `<div class="notice-list">${list.map(n => `<article class="notice ${n.read ? "" : "unread"} ${n.pinned ? "pinned" : ""}" data-notice="${n.id}" tabindex="0">
     <div class="n-top">${n.read ? "" : `<span class="dot-new" aria-label="Unread"></span>`}${n.pinned ? `<span class="chip-s good">Pinned</span>` : ""}<b>${E(n.title)}</b><span class="muted">${BW.when(n.created_at)}</span></div>
-    <p class="muted n-from">From ${E(n.author_name)} · ${E(n.classes.join(", "))}</p><p class="n-body">${E(n.body)}</p></article>`).join("")}</div>`
+    <p class="muted n-from">From ${E(n.author_name)} · ${E(n.classes.join(", "))}</p><p class="n-body">${E(n.body)}</p>${n.redo ? `<button class="link" data-nav="tasks">Open task</button>` : ""}</article>`).join("")}</div>`
     : `<div class="empty">No messages yet. Notices from your teachers will appear here.</div>`}`;
 };
 BW.bindMessages = root => {

@@ -36,7 +36,7 @@ BW.db.updateClass = (cid, patch) => ref("classes", cid).update(Object.fromEntrie
 BW.db.deleteClass = async cid => {
   const managed = (await col("classes", cid, "members").where("managed", "==", true).get()).docs.map(d => d.id);   // school logins lose this class from their list
   for (let i = 0; i < managed.length; i += 400) { const b = BW.fs.batch(); managed.slice(i, i + 400).forEach(sid => b.update(ref("users", sid), { classIds: FV.arrayRemove(cid) })); await b.commit().catch(() => { }); }
-  for (const sub of ["members", "tasks", "notices", "results", "answers"]) {
+  for (const sub of ["members", "tasks", "notices", "results", "answers", "resubs"]) {
     const q = await col("classes", cid, sub).get();
     for (let i = 0; i < q.docs.length; i += 400) { const b = BW.fs.batch(); q.docs.slice(i, i + 400).forEach(d => b.delete(d.ref)); await b.commit(); }
   }
@@ -120,21 +120,37 @@ BW.updateMemberStats = async (cid, answers, quizId, pct) => {
 };
 
 /* ---------- reports (worked out in the teacher's browser from class results) ---------- */
-const reportFor = (task, roster, res) => roster.map(m => {
-  const items = task.quiz_ids.map(q => { const mine = res.filter(r => r.uid === m.student_id && r.quiz_id === q && r.finished_at >= (task.created_at || ""));
+/* a student's progress on one task; after a resubmission request only work done since the request counts for the items it names */
+const sinceFor = (task, uid, q, resubs) => { const r = resubs?.[`${task.id}_${uid}`], c = task.created_at || "";
+  return r && r.quiz_ids.includes(q) && (r.requested_at || "") > c ? r.requested_at : c; };
+const reportFor = (task, roster, res, resubs) => roster.map(m => {
+  const items = task.quiz_ids.map(q => { const since = sinceFor(task, m.student_id, q, resubs), mine = res.filter(r => r.uid === m.student_id && r.quiz_id === q && r.finished_at >= since);
     const passed = mine.filter(r => r.pct * 100 >= task.target_pct).map(r => r.finished_at).sort();
     return { quiz_id: q, best: mine.length ? Math.max(...mine.map(r => r.pct)) : null, tries: mine.length, completed_at: passed[0] || null, last_at: mine.map(r => r.finished_at).sort().pop() || null, results: mine }; });
   const tries = items.reduce((s, i) => s + i.tries, 0), done = items.filter(i => i.completed_at);
-  return { student_id: m.student_id, display_name: m.display_name, avatar_color: m.avatar_color, managed: m.managed, best: tries ? items.reduce((s, i) => s + (i.best || 0), 0) / items.length : null, tries,
+  return { student_id: m.student_id, display_name: m.display_name, avatar_color: m.avatar_color, managed: m.managed, resub: resubs?.[`${task.id}_${m.student_id}`] || null, best: tries ? items.reduce((s, i) => s + (i.best || 0), 0) / items.length : null, tries,
     completed_at: done.length === items.length ? done.map(i => i.completed_at).sort().pop() : null, last_at: items.map(i => i.last_at).filter(Boolean).sort().pop() || null, items_done: done.length, items };
 });
 BW.db.assignmentReport = async (cid, tid) => {
-  const [task, roster] = await Promise.all([BW.db.task(cid, tid), BW.db.roster(cid)]);
-  return reportFor(task, roster, await BW.db.results(cid, task.quiz_ids));
+  const [task, roster, resubs] = await Promise.all([BW.db.task(cid, tid), BW.db.roster(cid), BW.db.resubs(cid)]);
+  return reportFor(task, roster, await BW.db.results(cid, task.quiz_ids), resubs);
 };
+/* the class progress grid: every student against every task */
+BW.db.classGrid = async cid => {
+  const [tasks, roster, res, resubs] = await Promise.all([BW.db.tasks(cid), BW.db.roster(cid), BW.db.results(cid), BW.db.resubs(cid)]);
+  return { tasks, roster, resubs, results: res, cells: Object.fromEntries(tasks.map(t => [t.id, Object.fromEntries(reportFor(t, roster, res, resubs).map(r => [r.student_id, r]))])) };
+};
+/* resubmission requests */
+const resubRow = d => { const x = d.data(); return { id: d.id, uid: x.uid, task_id: x.taskId, task_title: x.taskTitle, quiz_ids: x.quizIds || [], reason: x.reason || "",
+  requested_at: ts(x.requestedAt), teacher_name: x.teacherName || "" }; };
+BW.db.resubs = async cid => Object.fromEntries((await col("classes", cid, "resubs").get()).docs.map(d => [d.id, resubRow(d)]));
+BW.db.requestResub = (cid, task, uid, quizIds, reason) => ref("classes", cid, "resubs", `${task.id}_${uid}`).set({ uid, taskId: task.id, taskTitle: task.title.slice(0, 100),
+  quizIds, reason: reason.slice(0, 1000), requestedAt: FV.serverTimestamp(), requestedBy: me(), teacherName: BW.S.profile.display_name });
+BW.db.cancelResub = (cid, taskId, uid) => ref("classes", cid, "resubs", `${taskId}_${uid}`).delete();
+BW.resubRow = resubRow;
 BW.db.assignmentSummary = async cid => {   // one read of the tasks, members and results, however many tasks there are
-  const [tasks, roster, res] = await Promise.all([BW.db.tasks(cid), BW.db.roster(cid), BW.db.results(cid)]);
-  return tasks.map(t => { const rows = reportFor(t, roster, res), started = rows.filter(r => r.tries > 0);
+  const [tasks, roster, res, resubs] = await Promise.all([BW.db.tasks(cid), BW.db.roster(cid), BW.db.results(cid), BW.db.resubs(cid)]);
+  return tasks.map(t => { const rows = reportFor(t, roster, res, resubs), started = rows.filter(r => r.tries > 0);
     return { assignment_id: t.id, students: rows.length, started: started.length, completed: rows.filter(r => r.completed_at).length,
       on_time: rows.filter(r => r.completed_at && (!t.due_at || r.completed_at <= t.due_at)).length,
       avg_best: started.length ? started.reduce((s, r) => s + r.best, 0) / started.length : null, avg_items_done: rows.length ? rows.reduce((s, r) => s + r.items_done, 0) / rows.length : 0 }; });

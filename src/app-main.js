@@ -26,7 +26,7 @@ BW.go = (name, params = {}) => {
   else if (!PLAY.includes(prev.name) && !PLAY.includes(name) && prev.name !== name && prev.name !== "auth") BW.stack.push(prev);
   else if (PLAY.includes(prev.name) && !PLAY.includes(name)) BW.stack = BW.stack.filter(r => r.name !== name);
   if (name === "sub" && !PLAY.includes(prev.name) && (prev.name !== "sub" || prev.params.sid !== params.sid)) { BW.ui.open = null; BW.ui.subTab = "quiz"; }
-  if (name === "class" && prev.params?.cid !== params.cid) BW.ui.classTab = "tasks";
+  if (name === "class" && prev.params?.cid !== params.cid) BW.ui.classTab = "progress";
   BW.route = { name, params };
   BW.render();
   if (name !== prev.name || name === "quiz") window.scrollTo({ top: 0 });
@@ -50,6 +50,7 @@ BW.renderRail = () => {
 };
 
 BW.render = () => {
+  window.BW_BOOTED = true;
   if (!BW.S.profile && BW.route.name !== "auth") BW.route = { name: "auth", params: {} };
   const { name, params } = BW.route, v = document.getElementById("view"), side = document.getElementById("side"), shell = document.getElementById("shell");
   const teacher = BW.isTeacher();
@@ -115,9 +116,11 @@ BW.enter = (user, force) => {
   if (!force && entering === user.uid) return; entering = user.uid;
   BW.S.user = { id: user.uid, email: user.email };
   document.getElementById("view").innerHTML = BW.splash("Loading your progress…");
-  BW.withTimeout(BW.loadAll(), 20000).catch(e => { if (["removed_from_school", "no_profile"].includes(e.code)) throw e;
+  const slow = setTimeout(() => { const sp = document.querySelector(".splash"); if (sp && entering === user.uid && !sp.querySelector("#slowReload"))
+    sp.insertAdjacentHTML("beforeend", `<button class="cta ghost small" id="slowReload">Taking a while? Reload</button>`), document.getElementById("slowReload").onclick = () => location.reload(); }, 8000);
+  BW.withTimeout(BW.loadAll(), 12000).catch(e => { if (["removed_from_school", "no_profile"].includes(e.code)) throw e;
     const m = document.querySelector(".splash-msg"); if (m) m.textContent = "Reconnecting…";
-    return BW.reconnect().then(() => BW.withTimeout(BW.loadAll(), 20000)); }).then(() => { BW.stack = []; BW.route = { name: "home", params: {} }; BW.render(); })
+    return BW.reconnect().then(() => BW.withTimeout(BW.loadAll(), 15000)); }).finally(() => clearTimeout(slow)).then(() => { BW.stack = []; BW.route = { name: "home", params: {} }; BW.render(); })
     .catch(e => { entering = null;
       const removed = e.code === "removed_from_school", missing = e.code === "no_profile";
       document.getElementById("view").innerHTML = `<div class="splash"><h2>${removed ? "This school login has been removed" : missing ? "Your account isn't set up" : "Couldn't load Bitwise"}</h2>

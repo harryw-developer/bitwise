@@ -227,6 +227,16 @@ service cloud.firestore {
         allow delete: if teaches(cid);
       }
 
+      // a teacher asking one student to redo some items of a task (the student sees the reason; only work after the request counts)
+      match /resubs/{rid} {
+        function x() { return request.resource.data; }
+        allow read: if signedIn() && (resource.data.uid == uid() || teaches(cid));
+        allow create, update: if teaches(cid) && x().keys().hasOnly(['uid', 'taskId', 'taskTitle', 'quizIds', 'reason', 'requestedAt', 'requestedBy', 'teacherName'])
+          && rid == x().taskId + '_' + x().uid && x().uid is string && str(x().taskTitle, 100) && x().reason is string && x().reason.size() <= 1000
+          && x().quizIds is list && x().quizIds.size() >= 1 && x().quizIds.size() <= 20 && x().requestedAt == request.time && x().requestedBy == uid();
+        allow delete: if teaches(cid);
+      }
+
       // copies of finished attempts, so teachers can analyse them (written by the student, must match their real attempt).
       // The summary (results) is small so reports load fast; the answers are a separate document read only when needed.
       match /results/{aid} {

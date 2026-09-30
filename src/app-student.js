@@ -6,10 +6,11 @@ BW.viewTasks = () => {
     return `<article class="task-card multi"><div class="sw" style="background-image:${cover}"></div>
       <div class="tc-body"><div class="tc-top"><span class="due-chip ${due.cls}">${due.text}</span><span class="muted">${E(t.class_name)}</span></div>
       <h3>${E(t.title)}</h3>${t.instructions ? `<p class="tc-note">${E(t.instructions)}</p>` : ""}
+      ${t.resub && !t.completed_at ? `<div class="redo-box"><b>↺ ${E(t.resub.teacher_name || "Your teacher")} asked you to resubmit</b>${t.resub.reason ? `<p>${E(t.resub.reason)}</p>` : ""}</div>` : ""}
       <div class="tc-prog"><div class="bar"><i style="width:${k ? t.items_done / k * 100 : 0}%"></i></div><span class="num">${t.items_done}/${k} item${k === 1 ? "" : "s"} done · target ${t.target_pct}% each</span></div>
       <ol class="task-items">${items.map((it, i) => { const l = BW.itemLabel(it.quiz_id), done = !!it.completed_at, b = it.best != null ? Math.round(it.best * 100) : null;
         return `<li><button class="task-item ${done ? "done" : ""} ${i === next ? "next" : ""}" data-taskitem="${t.id}|${E(it.quiz_id)}"><span class="ex-ico">${l.icon}</span>
-          <span class="tt"><b>${E(l.name)}</b><small>${done ? `Done · best ${b}%` : b != null ? `Best ${b}% · keep going` : i === next ? "Up next" : "Not started"}</small></span>
+          <span class="tt"><b>${E(l.name)}</b><small>${!done && t.resub?.quiz_ids.includes(it.quiz_id) ? "Resubmit" : done ? `Done · best ${b}%` : b != null ? `Best ${b}% · keep going` : i === next ? "Up next" : "Not started"}</small></span>
           <span class="tick ${done ? "done" : ""}">${done ? I.check : ""}</span></button></li>`; }).join("")}</ol></div></article>`; };
   return `<h1>Tasks</h1><p class="muted" style="margin-top:6px">A task is done when you reach its target score on every item.</p>
     ${cls.length || BW.S.profile.managed ? "" : `<div style="margin-top:20px">${BW.joinCard()}</div>`}
