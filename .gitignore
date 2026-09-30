@@ -10,3 +10,5 @@ firebase/test-accounts.local.md
 .claude/
 .DS_Store
 __pycache__/
+# demo accounts and their data (never committed)
+demo/
