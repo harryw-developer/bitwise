@@ -42,7 +42,7 @@ BW.codeCover = (seed, w = 480, h = 320) => BW.cover("code" + seed, "#0B1220", "#
 BW.viewCodeLab = () => {
   const all = BW.CODE.all, solved = all.filter(BW.codeSolved).length;
   return `<div class="hero lab-hero" style="background-image:${BW.cover("codelab-hero", "#0B1220", "#22C55E", "brackets", 1400, 560)}">
-    <div class="lab-hero-text"><span class="glass">Coding Lab</span><h1>Write real Python in your browser</h1><p>Every program is tested by running it, so any correct approach passes.</p>
+    <div class="lab-hero-text"><h1>Coding Lab</h1>
       <div class="lab-prog"><div class="bar"><i style="width:${solved / all.length * 100}%"></i></div><span class="num">${solved} of ${all.length} solved</span></div></div></div>
   ${BW.CODE.sections.map(s => `<div class="sec-head"><h2>${E(s.title)}</h2><span class="muted num">${s.items.filter(BW.codeSolved).length}/${s.items.length} solved</span></div>
     <div class="row-cards">${s.items.map(c => { const b = BW.codeBest(c), st = BW.codeSolved(c) ? "Solved" : b ? `Best ${Math.round(b.pct * 100)}%` : "New";
@@ -215,7 +215,7 @@ BW.bindCode = (root, { cid, a }) => {
     (w, close) => w.querySelector("#yesReset").onclick = () => { ide.code = c.starter; cm ? cm.setValue(c.starter) : ($("plainEd").value = c.starter); saveDraft(); close(); });
   $("solBtn")?.addEventListener("click", async () => {
     let sol; try { sol = await BW.db.codeSolution(c.id) || "Not available"; } catch (e) { sol = BW.errMsg(e); }
-    BW.modal(`<h2>Model solution</h2><p class="muted" style="margin:6px 0 12px">One correct approach. Students' programs are marked on output, so other approaches pass too.</p><pre class="codeview">${E(sol)}</pre><button class="cta" data-close style="margin-top:14px">Close</button>`);
+    BW.modal(`<h2>Model solution</h2><p class="muted" style="margin:6px 0 12px">One correct approach. Other correct approaches also pass.</p><pre class="codeview">${E(sol)}</pre><button class="cta" data-close style="margin-top:14px">Close</button>`);
   });
   if (ide.results) { showTab("tests"); renderTests(); }
   setTimeout(() => cm?.refresh(), 0);

@@ -59,7 +59,7 @@ BW.units.push({
         [2, "Which change would most directly increase the number of instructions processed per second on a single core?", "Increasing the clock speed", ["Adding more secondary storage", "Adding a bigger monitor", "Installing a new browser"], "Higher clock speed = more cycles per second."],
         [3, "What is a disadvantage of increasing clock speed (overclocking)?", "The CPU produces more heat", ["The CPU gets fewer cores", "Cache becomes volatile", "RAM becomes smaller"], "Higher speeds generate more heat and may be unstable."],
         [3, "A game uses one main thread. Which upgrade helps it most?", "A faster clock speed", ["Going from 8 to 16 cores", "A bigger hard drive", "More USB ports"], "Single-threaded work benefits from faster cores, not more of them."],
-        [3, "Which three characteristics affect CPU performance on the GCSE spec?", "Clock speed, cache size, number of cores", ["RAM, ROM, virtual memory", "Screen size, battery, keyboard", "Bus width, fan speed, case size"], "The spec lists clock speed, cache size and number of cores."],
+        [3, "Which three characteristics affect CPU performance?", "Clock speed, cache size, number of cores", ["RAM, ROM, virtual memory", "Screen size, battery, keyboard", "Bus width, fan speed, case size"], "The spec lists clock speed, cache size and number of cores."],
         [2, "Cache comes in levels. Which is fastest?", "Level 1", ["Level 2", "Level 3", "They are all the same speed"], "L1 is smallest and fastest; L3 is larger and slower."]
       ] },
     { id: "embedded", title: "Embedded Systems", motif: "grid",

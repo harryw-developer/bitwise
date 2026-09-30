@@ -37,7 +37,7 @@ cat > "$OUT/index.html" <<EOF
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bitwise</title>
-<meta name="description" content="GCSE Computer Science revision: quizzes, a Python coding lab, boss battles, class leaderboards and teacher analytics.">
+<meta name="description" content="Master computer science, one bit at a time.">
 <meta http-equiv="Content-Security-Policy" content="$META_CSP">
 <meta name="theme-color" content="#1D2023">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23F0A35E'/%3E%3Cstop offset='1' stop-color='%232F9BB3'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='32' fill='url(%23g)'/%3E%3Ctext x='32' y='41' font-family='monospace' font-weight='700' font-size='24' text-anchor='middle' fill='%231D2023'%3E01%3C/text%3E%3C/svg%3E">

@@ -11,7 +11,7 @@ BW.viewTasks = () => {
         return `<li><button class="task-item ${done ? "done" : ""} ${i === next ? "next" : ""}" data-taskitem="${t.id}|${E(it.quiz_id)}"><span class="ex-ico">${l.icon}</span>
           <span class="tt"><b>${E(l.name)}</b><small>${done ? `Done · best ${b}%` : b != null ? `Best ${b}% · keep going` : i === next ? "Up next" : "Not started"}</small></span>
           <span class="tick ${done ? "done" : ""}">${done ? I.check : ""}</span></button></li>`; }).join("")}</ol></div></article>`; };
-  return `<h1>Tasks</h1><p class="muted" style="margin-top:6px">Work set by your teachers. A task is done when you reach its target score. Extra practice on the same quiz counts too.</p>
+  return `<h1>Tasks</h1><p class="muted" style="margin-top:6px">A task is done when you reach its target score on every item.</p>
     ${cls.length || BW.S.profile.managed ? "" : `<div style="margin-top:20px">${BW.joinCard()}</div>`}
     <div class="sec-head"><h2>To do</h2><span class="muted">${todo.length}</span></div>
     ${todo.length ? `<div class="task-list">${todo.map(card).join("")}</div>` : `<div class="empty">${cls.length ? "Nothing to do right now. Try a Daily Challenge." : "Join a class to see tasks here."}</div>`}
@@ -34,7 +34,7 @@ BW.viewProfile = () => {
   <div class="two-col" style="margin-top:28px">
     <section class="panel"><h3>Mastery by unit</h3>${BW.units.map(u => { const m = Math.round(BW.unitMastery(u) * 100); return `<button class="unit-prog" data-unit="${u.id}" style="width:100%;text-align:left"><span class="sw" style="background-image:${BW.unitCover(u, 120, 120)}"></span><span class="tt"><b>${E(u.title)}</b><div class="bar" style="margin-top:6px"><i style="width:${m}%"></i></div></span><span class="pc">${m}%</span></button>`; }).join("")}</section>
     <div style="display:grid;gap:18px;align-content:start">
-      ${p.managed ? `<section class="panel managed-note"><h3>${BW.managedBadge()}</h3><p>Your school set up this account. Your teacher looks after your name, your classes and your login, so ask them if something needs changing.</p>${p.username ? `<p class="muted">Username: <span class="mono">${E(p.username)}</span></p>` : ""}</section>` : ""}
+      ${p.managed ? `<section class="panel managed-note"><h3>${BW.managedBadge()}</h3><p>Ask your teacher to change your name, classes or password.</p>${p.username ? `<p class="muted">Username: <span class="mono">${E(p.username)}</span></p>` : ""}</section>` : ""}
       ${teacher && S.school ? BW.schoolPanel() : ""}
       <section class="panel"><h3>Your profile</h3><form id="profileForm" class="form"><label for="pfName">Display name</label><input id="pfName" maxlength="40" required value="${E(p.display_name)}" ${p.managed ? 'disabled aria-describedby="nameLock"' : ""}>${p.managed ? `<p class="note" id="nameLock">Only your teacher can change your name.</p>` : ""}
         <label>Avatar colour</label><div class="swatches">${SWATCHES.map(c => `<button type="button" class="swatch ${c === p.avatar_color ? "on" : ""}" data-swatch="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join("")}</div>
@@ -42,7 +42,7 @@ BW.viewProfile = () => {
       <section class="panel"><h3>Settings</h3><div class="row-line"><span style="flex:1">Sound effects</span><button class="toggle ${BW.sfx.muted ? "" : "on"}" data-act="sound" aria-pressed="${!BW.sfx.muted}"><span></span></button></div>
         <div class="row-line"><span style="flex:1">Dark mode</span><button class="toggle ${document.documentElement.dataset.theme === "dark" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches) ? "on" : ""}" data-act="theme"><span></span></button></div></section>
       <section class="panel"><h3>Account</h3>
-        ${p.managed ? `<p class="muted">Password changes and account deletion are handled by your school.</p>` : `<form id="pwForm" class="form"><label for="pfPw">New password</label><input id="pfPw" type="password" minlength="8" autocomplete="new-password" placeholder="At least 8 characters"><button class="small-btn">Change password</button></form>`}
+        ${p.managed ? `` : `<form id="pwForm" class="form"><label for="pfPw">New password</label><input id="pfPw" type="password" minlength="8" autocomplete="new-password" placeholder="At least 8 characters"><button class="small-btn">Change password</button></form>`}
         ${!teacher && !p.managed ? `<details class="more"><summary>I'm a teacher</summary><form id="teachForm" class="form"><label for="tcCode">Teacher code</label><input id="tcCode" autocomplete="off" placeholder="From a colleague already on Bitwise"><button class="small-btn">Switch to a teacher account</button></form></details>` : ""}
         <div class="row-btns" style="margin-top:14px"><button class="cta ghost" data-act="signout">Sign out</button>${p.managed ? "" : `<button class="cta danger" data-act="delete">Delete account</button>`}</div></section>
     </div></div>`;

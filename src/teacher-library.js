@@ -31,7 +31,7 @@ BW.libBuild = () => {
   const unitF = u => F(u.id, `${BW.units.indexOf(u) + 1}. ${u.title}`, u.subs.map(s => F(s.id, s.title,
     BW.LEVELS.map((L, i) => file(`${u.id}.${s.id}.${i}`, L.name, `${L.name} quiz`, `${L.n} questions`, { lvl: i, u, s, diff: i + 1, full: `${s.title} · ${L.name}` })), { u, s })), { u });
   const root = F("lib", "Task Library", [
-    F("topics", "Topic quizzes", [F("p1", "Paper 1 · Computer systems", BW.units.filter(u => u.paper === 1).map(unitF)), F("p2", "Paper 2 · Algorithms and programming", BW.units.filter(u => u.paper === 2).map(unitF))]),
+    F("topics", "Topic quizzes", [F("p1", "Computer systems", BW.units.filter(u => u.paper === 1).map(unitF)), F("p2", "Algorithms and programming", BW.units.filter(u => u.paper === 2).map(unitF))]),
     F("code", "Coding Lab", BW.CODE.sections.map(sec => F(sec.id, sec.title, sec.items.map(x => BW.findChallenge(x.id)).map(c => file(`code.${c.id}`, c.title, c.kind ? BW.KIND[c.kind].type : "Python challenge", `${c.tests.length} test${c.tests.length === 1 ? "" : "s"}${c.req.length ? ` · ${c.req.length} rule${c.req.length > 1 ? "s" : ""}` : ""}`, { c, diff: c.level }))))),
     F("boss", "Boss battles", BW.units.map(u => file(`${u.id}.boss`, BW.BOSSES[u.id], "Boss battle", `15 questions · ${u.title}`, { u, diff: 3, full: `Boss battle: ${BW.BOSSES[u.id]}` }))),
     F("quick", "Quick fire", BW.quickModes.map(m => file(`quick.${m.id}`, m.title, "Quick fire", m.sub, { m, diff: 2 })))

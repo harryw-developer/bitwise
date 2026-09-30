@@ -3,7 +3,7 @@ BW.ui.authMode = "signin";
 BW.viewAuth = () => {
   const m = BW.ui.authMode, role = BW.ui.signupRole || "student", tmode = BW.ui.teacherMode || "join";
   let form = "";
-  if (m === "signin") form = `<h2>Welcome back</h2><p class="muted">Sign in with your email, or the username your school gave you.</p>
+  if (m === "signin") form = `<h2>Welcome back</h2><p class="muted">Use your email or school username.</p>
     <form id="authForm" class="form"><label for="siId">Email or username</label><input id="siId" autocomplete="username" required>
     <label for="siPw">Password</label><input id="siPw" type="password" autocomplete="current-password" required>
     <button class="cta">Sign in</button></form>
@@ -15,22 +15,21 @@ BW.viewAuth = () => {
     <label for="suEmail">Email</label><input id="suEmail" type="email" autocomplete="email" required>
     <label for="suPw">Password</label><input id="suPw" type="password" minlength="8" autocomplete="new-password" placeholder="At least 8 characters" required>
     ${role === "teacher" && tmode === "join" ? `<label for="suCode">Teacher code</label><input id="suCode" autocomplete="off" placeholder="From a colleague already on Bitwise, e.g. ABCDE-FGHJK" required>` : ""}
-    ${role === "teacher" && tmode === "create" ? `<label for="suSchool">School name</label><input id="suSchool" maxlength="80" placeholder="e.g. Kingsbridge Academy" required><p class="note">You'll get a teacher code to share with colleagues so they join the same school.</p>` : ""}
-    <p class="note">We store your name, email and quiz results so you${role === "teacher" ? " can track your classes" : "r teacher can see your progress"}. You can delete your account at any time from your profile.</p>
+    ${role === "teacher" && tmode === "create" ? `<label for="suSchool">School name</label><input id="suSchool" maxlength="80" placeholder="e.g. Kingsbridge Academy" required><p class="note">You'll get a teacher code to share with colleagues.</p>` : ""}
+    <p class="note">We store your name, email and progress. You can delete your account at any time from your profile.</p>
     <button class="cta">Create account</button></form>
     <div class="auth-links"><span>Already have an account? <button class="link" data-auth="signin">Sign in</button></span></div>
-    ${role === "student" ? `<p class="note">Got a username from your school? You don't need to sign up: just sign in with it.</p>` : ""}`;
-  if (m === "forgot") form = `<h2>Reset your password</h2><p class="muted">We'll email you a link. Logins made by your school don't have an email: ask your teacher instead.</p>
+    ${role === "student" ? `<p class="note">Have a school username? Sign in with it instead.</p>` : ""}`;
+  if (m === "forgot") form = `<h2>Reset your password</h2><p class="muted">We'll email you a link. For a school username, ask your teacher.</p>
     <form id="authForm" class="form"><label for="fgEmail">Email</label><input id="fgEmail" type="email" autocomplete="email" required><button class="cta">Send reset link</button></form>
     <div class="auth-links"><button class="link" data-auth="signin">Back to sign in</button></div>`;
   if (m === "check") form = `<h2>Check your inbox</h2><p class="muted">If there's an account for <b>${E(BW.ui.authEmail || "that email")}</b>, a reset link is on its way. Follow it, then come back and sign in.</p><div class="auth-links"><button class="link" data-auth="signin">Back to sign in</button></div>`;
   return `<div class="auth">
     <section class="auth-art" style="background-image:${BW.cover("auth-hero", "#2F9BB3", "#F0A35E", "bits", 900, 1100)}">
       <div class="logo big" aria-hidden="true">01</div>
-      <div><h1>Revise GCSE Computer Science like it's a game.</h1>
-      <div class="auth-pills"><span class="glass">${BW.quizCount()} quizzes</span><span class="glass">Python Coding Lab</span><span class="glass">Class leaderboards</span><span class="glass">Teacher dashboards</span></div></div>
+      <div><h1>Master computer science, one bit at a time.</h1></div>
     </section>
-    <section class="auth-card"><div class="auth-brand"><b>Bitwise</b><span class="muted">GCSE Computer Science</span></div>${form}<p class="auth-err" id="authErr" role="alert"></p></section>
+    <section class="auth-card"><div class="auth-brand"><b>Bitwise</b></div>${form}<p class="auth-err" id="authErr" role="alert"></p></section>
   </div>`;
 };
 BW.bindAuth = root => {

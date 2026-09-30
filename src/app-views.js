@@ -18,14 +18,14 @@ BW.dueLabel = t => {
 
 BW.unitCard = u => `<article class="ucard" data-unit="${u.id}" style="background-image:${BW.unitCover(u, 640, 800)}">
   ${BW.favBtn("u:" + u.id)}
-  <span class="eyebrow">Paper ${u.paper} · Unit ${BW.units.indexOf(u) + 1}</span>
+  <span class="eyebrow">Unit ${BW.units.indexOf(u) + 1}</span>
   <h3>${E(u.title)}</h3>
   <div class="meta"><span class="glass">${I.star} ${BW.unitMedals(u)}</span><span>${u.subs.length * 4 + 1} quizzes</span>${BW.S.best[u.id + ".boss"]?.pct >= BW.PASS ? `<span class="glass">Boss beaten</span>` : ""}</div>
   <button class="see-more" data-unit="${u.id}">See more <span class="go">${I.chev.replace("<svg", '<svg width="20" height="20"')}</span></button>
 </article>`;
 BW.labCard = () => { const all = BW.CODE.all, solved = all.filter(BW.codeSolved).length;
   return `<article class="ucard" data-nav="codelab" style="background-image:${BW.cover("codelab", "#0B1220", "#22C55E", "brackets", 640, 800)}">
-  <span class="eyebrow">Paper 2 · Practical</span><h3>Coding Lab</h3>
+  <span class="eyebrow">Python</span><h3>Coding Lab</h3>
   <div class="meta"><span class="glass">${I.star} ${solved}/${all.length} solved</span><span>${all.length} Python challenges</span></div>
   <button class="see-more" data-nav="codelab">Start coding <span class="go">${I.chev.replace("<svg", '<svg width="20" height="20"')}</span></button></article>`; };
 BW.subTile = (u, s, showUnit = true) => `<article class="tile" data-sub="${u.id}/${s.id}">
@@ -56,7 +56,7 @@ BW.viewHome = () => {
   if (c === "prog") units = units.filter(u => { const m = BW.unitMastery(u); return m > 0 && m < 1; });
   if (c === "saved") units = units.filter(u => BW.favs()["u:" + u.id]);
   const savedSubs = c === "saved" ? BW.allSubs().filter(({ u, s }) => BW.favs()["s:" + u.id + "." + s.id]) : [];
-  const chips = [["all", "All units"], ["p1", "Paper 1 · Systems"], ["p2", "Paper 2 · Algorithms"], ["prog", "In progress"], ["saved", "Saved"]];
+  const chips = [["all", "All units"], ["p1", "Computer systems"], ["p2", "Algorithms & programming"], ["prog", "In progress"], ["saved", "Saved"]];
   const lv = BW.levelOf(BW.S.profile.xp), today = BW.S.best["daily." + BW.dayKey()];
   return `<header class="hello"><div><h1>Hello, ${E(BW.myName().split(" ")[0])}</h1><p class="sub">Level ${lv.L} ${E(BW.titleOf(lv.L))} · ${BW.liveStreak() ? `${I.flame} ${BW.liveStreak()}-day streak` : "Answer a quiz today to start a streak"}</p></div><button class="avatar-btn" data-nav="profile" aria-label="Your profile">${BW.avatarHTML()}</button></header>
   <form class="search" id="searchForm" role="search">${I.search}<input id="search" placeholder="Search topics, e.g. hex, SQL, firewall" value="${E(BW.ui.search)}" aria-label="Search topics"><button type="button" class="icon-dark" data-nav="topics" aria-label="Browse all topics">${I.sliders}</button></form>
@@ -65,7 +65,7 @@ BW.viewHome = () => {
   <div class="chips" role="tablist">${chips.map(([k, l]) => `<button class="chip ${c === k ? "on" : ""}" data-chip="${k}" role="tab" aria-selected="${c === k}">${l}</button>`).join("")}</div>
   ${units.length || c === "all" || c === "p2" ? `<div class="deck" style="margin-top:14px">${c === "all" || c === "p2" ? BW.labCard() : ""}${units.map(BW.unitCard).join("")}</div>` : `<div class="empty">${c === "saved" ? "Tap the heart on a unit or topic to save it here." : "Nothing in progress yet. Start any quiz below."}</div>`}
   ${savedSubs.length ? `<div class="row-cards">${savedSubs.map(({ u, s }) => BW.subTile(u, s)).join("")}</div>` : ""}
-  <div class="sec-head"><h2>Quick fire</h2><span class="muted">${BW.quizCount()} quizzes in total</span></div>
+  <div class="sec-head"><h2>Quick fire</h2></div>
   <div class="quick">${BW.quickModes.map(m => `<button class="qcard" data-quick="${m.id}" style="background-image:${BW.cover("q" + m.id, m.c1, m.c2, m.motif, 520, 360)}"><small>${m.id === "daily" ? (today ? `Done today · ${Math.round(today.pct * 100)}%` : "+30 XP bonus today") : m.id === "speed" ? (BW.S.best["quick.speed"] ? `Best ${Math.round(BW.S.best["quick.speed"].pct * 100)}% accuracy` : "Beat the clock") : "Endless practice"}</small><div><b>${m.title}</b><br><small>${m.sub}</small></div></button>`).join("")}</div>`;
 };
 
@@ -82,10 +82,10 @@ BW.viewSide = () => {
 };
 
 BW.viewTopics = () => `<h1>All topics</h1>
-  <button class="boss-cta lab-cta" data-nav="codelab" style="background-image:${BW.cover("codelab-strip", "#0B1220", "#22C55E", "brackets", 900, 300)}"><span><small>Python in your browser · marked on output</small><b>Coding Lab: ${BW.CODE.all.length} challenges</b><small>${BW.CODE.sections.map(s => s.title).join(" · ")}</small></span><span class="go">${I.arrow}</span></button><p class="muted" style="margin-top:6px">${BW.units.length} units, ${BW.allSubs().length} topics and ${BW.quizCount()} quizzes, following the GCSE (9–1) specification.</p>
+  <button class="boss-cta lab-cta" data-nav="codelab" style="background-image:${BW.cover("codelab-strip", "#0B1220", "#22C55E", "brackets", 900, 300)}"><span><b>Coding Lab</b><small>${BW.CODE.sections.map(s => s.title).join(" · ")}</small></span><span class="go">${I.arrow}</span></button>
   <form class="search" id="searchForm" role="search">${I.search}<input id="search" placeholder="Filter topics" value="${E(BW.ui.search)}" aria-label="Filter topics"></form>
   ${BW.units.map(u => { const hits = BW.ui.search.trim() ? BW.searchHits(BW.ui.search) : null; const subs = u.subs.filter(s => !hits || hits.some(h => h.s === s)); if (!subs.length) return "";
-    return `<div class="sec-head"><div style="display:flex;gap:12px;align-items:center"><span class="avatar" style="width:40px;height:40px;background-image:${BW.unitCover(u, 120, 120)};background-size:cover;box-shadow:none"></span><div><h2>${E(u.title)}</h2><span class="muted">Paper ${u.paper} · ${BW.unitMedals(u)} medals</span></div></div><button class="link" data-unit="${u.id}">Open unit</button></div>
+    return `<div class="sec-head"><div style="display:flex;gap:12px;align-items:center"><span class="avatar" style="width:40px;height:40px;background-image:${BW.unitCover(u, 120, 120)};background-size:cover;box-shadow:none"></span><div><h2>${E(u.title)}</h2><span class="muted">${BW.unitMedals(u)} medals</span></div></div><button class="link" data-unit="${u.id}">Open unit</button></div>
     <div class="row-cards">${subs.map(s => BW.subTile(u, s, false)).join("")}</div>`; }).join("")}`;
 
 BW.viewUnit = ({ uid }) => {

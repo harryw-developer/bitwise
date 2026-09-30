@@ -84,9 +84,17 @@ BW.finishQuiz = async () => {
   Q.finalTotal = total; Q.pct = Q.firstRight / total; Q.pass = Q.pct >= BW.PASS;
   Q.victory = Q.mode === "boss" ? Q.hp <= 0 && Q.lives > 0 : null;
   Q.saving = true; BW.go("results");
+  if (Q.pass || Q.victory) { BW.confetti(); BW.sfx.play("win"); }
+  BW.saveQuiz(Q, total, log);
+};
+/* save the score; if the connection fails the results page offers "Try again" (a save that did get through isn't counted twice) */
+BW.saveQuiz = async (Q, total, log) => {
+  Q.saving = true; Q.saveErr = null; Q.saveArgs = [total, log];
+  if (BW.Q === Q && BW.route.name === "results") BW.render();
   const oldLevel = BW.levelOf(BW.S.profile.xp).L;
   try {
-    const id = await Q.attemptP; if (!id) throw Q.startErr || new Error("not_saved");
+    const id = await Q.attemptP;   // started when the quiz opened (a quiz started later couldn't pass the minimum-time check)
+    if (!id) throw Q.startErr || new Error("not_saved");
     const res = await BW.api.rpc("finish_attempt", { p_attempt: id, p_total: total, p_correct: Q.firstRight,
       p_max_combo: Q.maxCombo, p_answers: log, p_active_ms: Q.totalClock.ms() });
     BW.applyResult(res, Q.id); Q.res = res;
@@ -95,7 +103,6 @@ BW.finishQuiz = async () => {
   } catch (e) { Q.saveErr = BW.errMsg(e); }
   Q.saving = false;
   if (BW.Q === Q && BW.route.name === "results") BW.render();
-  if (Q.pass || Q.victory) { BW.confetti(); BW.sfx.play("win"); }
   const L = BW.levelOf(BW.S.profile.xp).L;
   if (Q.res && L > oldLevel) setTimeout(() => { BW.sfx.play("level"); BW.confetti(200);
     BW.modal(`<div class="levelup"><div class="ring big" style="--p:100"><i>${L}</i></div><h2>Level up!</h2><p class="muted">You're now level ${L}: <b>${BW.titleOf(L)}</b>.</p><button class="cta" data-close>Keep going</button></div>`); }, 900);
@@ -187,7 +194,7 @@ BW.viewResults = () => {
       <div class="stat"><b class="num">${Q.saving ? `<span class="dots" aria-label="Saving"><i></i><i></i><i></i></span>` : r ? "+" + r.xp_gain : "–"}</b><span>XP earned</span></div>
       <div class="stat"><b class="num">${Q.maxCombo}</b><span>Best combo</span></div>
     </div>
-    ${Q.saving ? `<p class="note saving-note">${BW.bitLoader(4, true)} Saving your score…</p>` : Q.saveErr ? `<p class="note err">${E(Q.saveErr)}</p>` : r?.first_daily ? `<p class="note">Includes +30 XP Daily Challenge bonus.</p>` : ""}
+    ${Q.saving ? `<p class="note saving-note">${BW.bitLoader(4, true)} Saving your score…</p>` : Q.saveErr ? `<p class="note err">Your score wasn't saved. ${E(Q.saveErr)} <button class="link" data-act="retrysave">Try again</button></p>` : r?.first_daily ? `<p class="note">Includes +30 XP Daily Challenge bonus.</p>` : ""}
     ${badges.length ? `<div class="new-badges"><h3>New badge${badges.length > 1 ? "s" : ""}</h3><div class="badge-grid">${badges.map(b => BW.badgeHTML(b, true)).join("")}</div></div>` : ""}
     <div style="display:grid;gap:10px;margin-top:18px">
       <button class="cta" data-act="again">${Q.mode === "boss" && !Q.victory ? "Rematch" : "Play again"}</button>
@@ -199,6 +206,7 @@ BW.bindResults = root => {
   const Q = BW.Q;
   root.querySelector("[data-act=done]").onclick = () => BW.go(...Q.back);
   root.querySelector("[data-act=again]").onclick = () => BW.startById(Q.id.startsWith("daily.") ? "quick.daily" : Q.id, Q.assignment);
+  root.querySelector("[data-act=retrysave]")?.addEventListener("click", () => { BW.reconnect().then(() => BW.saveQuiz(Q, ...Q.saveArgs)); });
 };
 BW.badgeHTML = (b, earned) => `<div class="badge ${earned ? "earned pop" : ""}" title="${BW.esc(b[1])}"><div class="hex"><span>${BW.esc(b[2])}</span></div><b>${BW.esc(b[0])}</b><small>${BW.esc(b[1])}</small></div>`;
 

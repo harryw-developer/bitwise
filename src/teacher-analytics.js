@@ -43,7 +43,7 @@ BW.bindTeachSearch = root => {
 BW.answersHTML = rows => {
   if (rows === undefined) return BW.loading;
   if (!rows) return `<p class="note err">Couldn't load these answers. Try again in a moment.</p>`;
-  if (!rows.length) return `<p class="note">No question-by-question data for this attempt (it was saved before detailed tracking was added).</p>`;
+  if (!rows.length) return `<p class="note">No answers recorded for this attempt.</p>`;
   const code = rows.find(r => r.q_type === "code");
   if (code) { const d = code.detail || {};
     return `<div class="code-sub"><div class="code-meta"><span class="chip-s ${code.is_correct ? "good" : "bad"}">${code.is_correct ? "Passed every test" : "Some tests failed"}</span><span>Submission ${code.try_no}</span><span>Time coding: <b>${BW.fmtMs(code.ms)}</b></span>${d.runs != null ? `<span>Runs before submitting: <b>${d.runs}</b></span>` : ""}</div>
@@ -126,7 +126,7 @@ BW.classStudents = c => {
   const roster = BW.fetchOnce("roster:" + c.id, () => BW.api.rpc("class_roster", { p_class: c.id }));
   const stats = BW.fetchOnce("sstats:" + c.id, () => BW.api.rpc("class_student_stats", { p_class: c.id }));
   const head = `<div class="row-btns" style="margin-bottom:12px"><button class="cta" data-act="fromdir">${BW.icon.school.replace("<svg", '<svg width="20" height="20"')}Add from school directory</button><button class="cta ghost" data-act="addstudents">Create student logins</button><button class="cta ghost" data-act="rostercsv" ${roster?.length ? "" : "disabled"}>Export CSV</button></div>
-    <p class="note" style="margin-bottom:16px">Students with their own email can sign up and join with code <b class="mono">${E(c.join_code)}</b>. School logins can be in as many classes as you like. Select a name to see every answer they've given.</p>`;
+    <p class="note" style="margin-bottom:16px">Join code <b class="mono">${E(c.join_code)}</b>. Select a name to see their answers.</p>`;
   if (roster === undefined) return head + BW.loading;
   if (!roster) return head + `<div class="empty">${E(BW.cacheErr("roster:" + c.id))}</div>`;
   const S = Object.fromEntries((stats || []).map(s => [s.student_id, s]));

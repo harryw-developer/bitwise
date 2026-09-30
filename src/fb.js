@@ -8,6 +8,14 @@ const col = (...p) => BW.fs.collection(p.join("/"));
 const ref = (...p) => BW.fs.doc(p.join("/"));
 const ts = v => v && typeof v.toDate === "function" ? v.toDate().toISOString() : v ?? null;
 const utcDay = d => (d instanceof Date ? d : new Date(d)).toISOString().slice(0, 10);
+/* A request that never answers (a sleeping laptop, flaky school Wi-Fi) shouldn't leave a page spinning for ever */
+BW.withTimeout = (p, ms = 20000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => { const e = new Error("timeout"); e.code = "timeout"; rej(e); }, ms))]);
+/* After the tab has been asleep or the network dropped, Firestore can sit in a long back-off before reconnecting,
+   which is what made pages hang until a refresh. Reconnect straight away instead. */
+BW.reconnect = () => BW.fs.disableNetwork().then(() => BW.fs.enableNetwork()).catch(() => { });
+{ let hiddenAt = 0;
+  document.addEventListener("visibilitychange", () => { if (document.hidden) hiddenAt = Date.now(); else if (hiddenAt && Date.now() - hiddenAt > 20000) BW.reconnect(); });
+  addEventListener("online", BW.reconnect); }
 const newId = () => BW.fs.collection("_").doc().id;
 const CODE_ABC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const randCode = n => { const a = new Uint32Array(n); crypto.getRandomValues(a); return [...a].map(x => CODE_ABC[x % 32]).join(""); };
@@ -23,6 +31,8 @@ const ERRORS = {
   "auth/too-many-requests": "Too many attempts. Wait a few minutes and try again.",
   "auth/requires-recent-login": "For your security, sign in again and then retry.",
   "auth/network-request-failed": "Can't reach Bitwise. Check your internet connection.",
+  timeout: "This is taking too long. Check your connection and try again.",
+  unavailable: "Can't reach Bitwise. Check your internet connection.",
   "auth/operation-not-allowed": "Email sign-in isn't switched on for this Bitwise project yet.",
   "auth/configuration-not-found": "Sign-in isn't set up for this Bitwise project yet (Firebase console → Authentication → Get started).",
   "permission-denied": "You don't have permission to do that.",
@@ -31,7 +41,7 @@ const ERRORS = {
   bad_teacher_code: "That teacher code isn't right. Ask your school's Bitwise admin for it.",
   managed_locked: "Your school manages this account, so ask your teacher to make that change.",
   too_fast: "That quiz was finished too quickly to count, so it wasn't saved.",
-  spark_no_reset: "Bitwise can't reset a school login's password on the free Firebase plan. Use the login card from when the account was made. If it's lost, remove the student from your school and create a new login.",
+  spark_no_reset: "School login passwords can't be reset. Use the login card from when the account was made, or remove the student from your school and create a new login.",
   not_found: "That couldn't be found. It may have been deleted.",
   forbidden: "You don't have access to that."
 };
@@ -173,7 +183,7 @@ BW.refreshStudent = async force => {
 BW.quizMult = q => /\.0$/.test(q) ? 1.0 : /\.1$/.test(q) ? 1.2 : /\.2$/.test(q) ? 1.5 : /\.3$/.test(q) ? 2.0 : /\.boss$/.test(q) ? 1.8 : /^daily\./.test(q) ? 1.5 : /^code\./.test(q) ? 1.5 : 1.2;
 BW.startAttempt = async (quizId, assignmentId) => {
   const r = col("users", BW.S.user.id, "attempts").doc();
-  await r.set({ quizId, assignmentId: assignmentId || null, status: "open", startedAt: FV.serverTimestamp() });
+  await BW.withTimeout(r.set({ quizId, assignmentId: assignmentId || null, status: "open", startedAt: FV.serverTimestamp() }));
   (BW.openAttempts = BW.openAttempts || {})[r.id] = quizId;
   return r.id;
 };
@@ -182,8 +192,12 @@ BW.finishAttempt = async ({ id, total, correct, maxCombo = 0, answers = [], acti
   // read everything the score depends on in one go (we already know which quiz this attempt is for)
   const reads = q => Promise.all([ref("users", uid, "best", q).get(), q.startsWith("daily.") ? ref("users", uid, "daily", q).get() : null]);
   const hint = BW.openAttempts?.[id];
-  let [att, prof, [bestSnap, dailySnap]] = await Promise.all([attemptRef.get(), ref("users", uid).get(), hint ? reads(hint) : [null, null]]);
+  let [att, prof, [bestSnap, dailySnap]] = await BW.withTimeout(Promise.all([attemptRef.get(), ref("users", uid).get(), hint ? reads(hint) : [null, null]]));
   if (!att.exists) fail("not_found");
+  if (att.data().status === "done") {   // an earlier save that timed out on our side actually reached the server
+    const a = att.data(), p = prof.data();
+    return { xp_gain: a.xp, xp: p.xp, week_xp: p.weekXp, streak: p.streak, pct: a.pct, pass: a.correct * 5 >= a.total * 4, first_daily: false, badges: [] };
+  }
   const quizId = att.data().quizId, mult = BW.quizMult(quizId), pct = correct / total, pass = correct * 5 >= total * 4;
   if (quizId !== hint) [bestSnap, dailySnap] = await reads(quizId);
   const p = prof.data(), prevBest = bestSnap.exists ? bestSnap.data().pct : 0, prevTries = bestSnap.exists ? bestSnap.data().tries : 0;
@@ -206,7 +220,7 @@ BW.finishAttempt = async ({ id, total, correct, maxCombo = 0, answers = [], acti
     b.set(ref("users", uid, "best", quizId), { pct: Math.max(pct, prevBest), tries: prevTries + 1, lastAt: FV.serverTimestamp(), attempt: id });
     const upd = { xp: (p.xp || 0) + xp, weekXp: p.weekKey === wk ? (p.weekXp || 0) + xp : xp, weekKey: wk, streak, bestStreak: Math.max(p.bestStreak || 0, streak) };
     b.update(ref("users", uid), { ...upd, lastDay: FV.serverTimestamp(), lastAttempt: id });
-    try { await b.commit(); lastErr = null; saved = upd; break; } catch (e) { lastErr = e; if (e.code !== "permission-denied") break; }
+    try { await BW.withTimeout(b.commit()); lastErr = null; saved = upd; break; } catch (e) { lastErr = e; if (e.code !== "permission-denied") break; }
   }
   if (lastErr) {
     const tooFast = (Date.now() - att.data().startedAt.toDate()) < total * 1500 + 2000;

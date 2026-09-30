@@ -4,7 +4,7 @@
 BW.ui.dirSel = new Set();
 BW.viewDirectory = () => {
   const S = BW.S, dir = BW.fetchOnce("dir", () => BW.db.directory()), mine = BW.myClasses().filter(c => !c.archived);
-  const head = `<h1>School directory</h1><p class="muted" style="margin-top:6px">${S.school ? E(S.school.name) + " · " : ""}Students whose logins were made by your school. Put them in as many of your classes as you like.</p>`;
+  const head = `<h1>School directory</h1><p class="muted" style="margin-top:6px">${S.school ? E(S.school.name) : ""}</p>`;
   if (dir === undefined) return head + BW.loading;
   if (!dir) return head + `<div class="empty">${E(BW.cacheErr("dir"))}</div>`;
   const q = (BW.ui.dirQ || "").toLowerCase(), f = BW.ui.dirFilter || "all";
@@ -39,7 +39,7 @@ BW.bindDirectory = root => {
     try { for (const id of ids) { const p = byId(id); if (p && !p.class_ids.includes(cid)) await BW.db.setClasses(id, [...p.class_ids.filter(c => BW.classById(c)), cid]); }
       BW.toast(`Added ${ids.length} to ${BW.classById(cid).name}`); BW.ui.dirSel.clear(); refresh(); } catch (e) { BW.toast(BW.errMsg(e)); b.disabled = false; } });
   root.querySelectorAll("[data-dirclasses]").forEach(b => b.onclick = () => { const p = byId(b.dataset.dirclasses), mine = BW.myClasses().filter(c => !c.archived);
-    BW.modal(`<h2>${E(p.display_name)}'s classes</h2><p class="muted" style="margin:6px 0 12px">Tick every one of your classes they should be in. Classes other teachers put them in aren't changed.</p>
+    BW.modal(`<h2>${E(p.display_name)}'s classes</h2><p class="muted" style="margin:6px 0 12px">Tick the classes they should be in.</p>
       <form id="clsForm" class="form">${mine.map(c => `<label class="check-row"><input type="checkbox" value="${c.id}" ${p.class_ids.includes(c.id) ? "checked" : ""}> ${E(c.name)}</label>`).join("") || `<p class="muted">Create a class first.</p>`}
       <div class="row-btns" style="margin-top:10px"><button type="button" class="cta ghost" data-close>Cancel</button><button class="cta">Save classes</button></div></form>`,
       (w, close) => w.querySelector("#clsForm").onsubmit = async e => { e.preventDefault(); const want = [...w.querySelectorAll("input:checked")].map(i => i.value);
@@ -53,7 +53,7 @@ BW.bindDirectory = root => {
   root.querySelectorAll("[data-dirremove]").forEach(b => b.onclick = () => BW.removeFromSchoolDialog(byId(b.dataset.dirremove), refresh));
 };
 BW.addFromDirectory = c => {
-  BW.modal(`<h2>Add to ${E(c.name)}</h2><p class="muted" style="margin:6px 0 12px">School logins can be in any number of classes. Tick the students to add.</p><div id="afdBody">${BW.loading}</div>`, async (w, close) => {
+  BW.modal(`<h2>Add to ${E(c.name)}</h2><p class="muted" style="margin:6px 0 12px">Tick the students to add.</p><div id="afdBody">${BW.loading}</div>`, async (w, close) => {
     const body = w.querySelector("#afdBody");
     try {
       const dir = (await BW.db.directory()).filter(p => p.role === "student" && p.managed && !p.class_ids.includes(c.id));
@@ -81,7 +81,7 @@ BW.removeFromSchoolDialog = (p, done) => BW.modal(`<h2>Remove ${E(p.display_name
 /* ---------- creating logins + login cards ---------- */
 BW.newLoginsDialog = (presetClass) => {
   const mine = BW.myClasses().filter(c => !c.archived);
-  BW.modal(`<h2>Create student logins</h2><p class="muted" style="margin:8px 0 12px">One name per line, up to 40. Each student gets a username and password (no email needed) and joins your school directory, labelled <b>Managed by your School</b>.</p>
+  BW.modal(`<h2>Create student logins</h2><p class="muted" style="margin:8px 0 12px">One name per line, up to 40.</p>
     <form id="namesForm" class="form"><label for="namesTxt">Student names</label><textarea id="namesTxt" rows="7" placeholder="Amira Khan&#10;Ben Thompson"></textarea>
     <label>Put them in these classes (optional)</label><div class="check-list">${mine.map(c => `<label class="check-row"><input type="checkbox" value="${c.id}" ${c.id === presetClass ? "checked" : ""}> ${E(c.name)}</label>`).join("") || `<span class="muted">No classes yet</span>`}</div>
     <div class="row-btns" style="margin-top:10px"><button type="button" class="cta ghost" data-close>Cancel</button><button class="cta" id="mkBtn">Create logins</button></div></form>`,
@@ -94,7 +94,7 @@ BW.newLoginsDialog = (presetClass) => {
 };
 BW.showCredentials = (list, c) => {
   const ok = list.filter(x => x.username), bad = list.filter(x => x.error), text = ok.map(x => `${x.name}\t${x.username}\t${x.password}`).join("\n");
-  BW.modal(`<h2>Student logins created</h2><p class="muted" style="margin:8px 0 12px"><b>Save these now: passwords are shown only once.</b> On the free plan Bitwise can't reset them later, so print the login cards or download the file.</p>
+  BW.modal(`<h2>Student logins created</h2><p class="muted" style="margin:8px 0 12px"><b>Passwords are shown only once.</b> Print the login cards or download the file now.</p>
     <div class="table-wrap cred-table"><table class="dtable"><thead><tr><th>Name</th><th>Username</th><th>Password</th></tr></thead><tbody>${ok.map(x => `<tr><td>${E(x.name)}</td><td class="mono">${E(x.username)}</td><td class="mono">${E(x.password)}</td></tr>`).join("")}</tbody></table></div>
     ${bad.length ? `<p class="note err">Couldn't create: ${bad.map(x => E(x.name) + " (" + E(x.error) + ")").join(", ")}</p>` : ""}
     <p class="note">Students sign in with their username (no @) and password at ${E(location.origin + location.pathname)}</p>
@@ -127,7 +127,7 @@ BW.bindSchoolPanel = root => {
 BW.composeNotice = presetClass => {
   const mine = BW.myClasses().filter(c => !c.archived);
   if (!mine.length) return BW.toast("Create a class first");
-  BW.modal(`<h2>Send a notice</h2><p class="muted" style="margin:6px 0 12px">It appears in the Messages centre of every student in the classes you tick.</p>
+  BW.modal(`<h2>Send a notice</h2><p class="muted" style="margin:6px 0 12px">Students see it in Messages.</p>
     <form id="ntcForm" class="form"><label for="ntcTitle">Title</label><input id="ntcTitle" maxlength="120" required placeholder="e.g. Coding homework due Friday">
     <label for="ntcBody">Message</label><textarea id="ntcBody" rows="5" maxlength="4000" required></textarea>
     <label>Send to</label><div class="check-list">${mine.map(c => `<label class="check-row"><input type="checkbox" value="${c.id}" ${!presetClass || c.id === presetClass ? "checked" : ""}> ${E(c.name)}</label>`).join("")}</div>

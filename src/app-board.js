@@ -13,10 +13,10 @@ BW.boardHTML = (rows, c, teacher) => {
 };
 BW.viewBoard = () => {
   const cls = BW.myClasses().filter(c => !c.archived);
-  if (!cls.length) return `<h1>Leaderboard</h1><p class="muted" style="margin:6px 0 20px">Leaderboards are private to each class.</p>${BW.isTeacher() ? `<div class="empty">Create a class to see its leaderboard.</div>` : BW.joinCard()}`;
+  if (!cls.length) return `<h1>Leaderboard</h1>${BW.isTeacher() ? `<div class="empty">Create a class to see its leaderboard.</div>` : BW.joinCard()}`;
   const cid = cls.some(c => c.id === BW.ui.boardClass) ? BW.ui.boardClass : cls[0].id, c = cls.find(x => x.id === cid);
   const rows = BW.fetchOnce("board:" + cid, () => BW.api.rpc("class_leaderboard", { p_class: cid }));
-  return `<h1>Leaderboard</h1><p class="muted" style="margin-top:6px">Only people in the same class can see each other here.</p>
+  return `<h1>Leaderboard</h1>
     ${cls.length > 1 ? `<div class="chips" style="margin-top:16px">${cls.map(x => `<button class="chip ${x.id === cid ? "on" : ""}" data-bclass="${x.id}">${E(x.name)}</button>`).join("")}</div>` : `<p class="note" style="margin-top:12px">${E(c.name)}</p>`}
     ${rows === undefined ? BW.loading : BW.boardHTML(rows || [], c, BW.isTeacher())}`;
 };

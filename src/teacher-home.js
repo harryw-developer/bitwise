@@ -1,11 +1,20 @@
 /* Teacher: dashboard, class page, tasks (assignments) */
 BW.cache = {};
-BW.fetchOnce = (key, fn) => {
+/* Page data: fetched once, shown straight away on later visits and quietly refreshed when it's over a minute old
+   (so reports stay current without reloading). A slow request gets one automatic retry on a fresh connection. */
+BW.fetchOnce = (key, fn, maxAge = 60000) => {
   const c = BW.cache[key];
-  if (c && "data" in c) return c.data;
-  if (!c) { BW.cache[key] = {}; fn().then(d => { BW.cache[key].data = d; BW.render(); }).catch(e => { BW.cache[key].data = null; BW.cache[key].err = BW.errMsg(e); BW.render(); }); }
-  return undefined;
+  const redraw = () => { if (!["quiz", "code", "results"].includes(BW.route.name)) BW.render(); };
+  const run = e => { e.busy = true;
+    const attempt = n => BW.withTimeout(fn(), 20000).catch(err => { if (n) throw err; return BW.reconnect().then(() => attempt(1)); });
+    attempt(0).then(d => { const changed = !("data" in e) || JSON.stringify(d) !== JSON.stringify(e.data);
+        Object.assign(e, { data: d, err: null, at: Date.now(), busy: false }); if (changed && BW.cache[key] === e) redraw(); })
+      .catch(err => { e.busy = false; if (e.data == null) { e.data = null; e.err = BW.errMsg(err); if (BW.cache[key] === e) redraw(); } }); };
+  if (!c) { run(BW.cache[key] = {}); return undefined; }
+  if ("data" in c && c.data !== null && !c.busy && Date.now() - c.at > maxAge) run(c);
+  return c.data;
 };
+BW.dropFailed = () => Object.keys(BW.cache).forEach(k => BW.cache[k].data === null && delete BW.cache[k]);   // try failed ones again on the next visit
 BW.cacheErr = key => BW.cache[key]?.err;
 BW.invalidate = (...prefixes) => Object.keys(BW.cache).forEach(k => prefixes.some(p => k.startsWith(p)) && delete BW.cache[k]);
 BW.loading = `<div class="skel" role="status" aria-label="Loading"><i></i><i></i><i></i><span class="skel-bits">${BW.bitLoader(5, true)}</span></div>`;
@@ -27,7 +36,7 @@ BW.viewTeach = () => {
   return `<header class="hello"><div><h1>Hello, ${E(BW.myName())}</h1><p class="sub">Teacher dashboard</p></div><button class="avatar-btn" data-nav="profile" aria-label="Your profile">${BW.avatarHTML()}</button></header>
   <div class="stat-row wide" style="margin-top:22px"><div class="stat card"><b class="num">${live.length}</b><span>Classes</span></div><div class="stat card"><b class="num">${dash ? new Set(dash.m.filter(x => live.some(c => c.id === x.class_id)).map(x => x.student_id)).size : "…"}</b><span>Students</span></div><div class="stat card"><b class="num">${dash ? dash.a.length : "…"}</b><span>Tasks set</span></div><div class="stat card"><b class="num">${dueSoon}</b><span>Due this week</span></div></div>
   ${live.length ? `<div class="row-btns" style="margin-top:18px"><button class="cta ghost" data-act="compose">${I.mail.replace("<svg", '<svg width="20" height="20"')}Send a notice to students</button><button class="cta ghost" data-nav="directory">${I.school.replace("<svg", '<svg width="20" height="20"')}School directory</button></div>` : ""}
-  <section class="panel" style="margin-top:18px"><h3>Create a class</h3><form class="nick" id="newClass"><input id="newClassName" maxlength="60" placeholder="e.g. 10X Computer Science" aria-label="Class name" required><button class="small-btn">Create class</button></form><p class="note">Each class gets a join code. Students can join with it, or you can create school logins for them and add them to as many classes as you like.</p></section>
+  <section class="panel" style="margin-top:18px"><h3>Create a class</h3><form class="nick" id="newClass"><input id="newClassName" maxlength="60" placeholder="e.g. 10X Computer Science" aria-label="Class name" required><button class="small-btn">Create class</button></form></section>
   ${BW.teachSearchHTML()}
   <div class="sec-head"><h2>Your classes</h2><button class="link" data-nav="topics">Browse the quizzes</button></div>
   ${live.length ? `<div class="class-grid">${live.map(card).join("")}</div>` : `<div class="empty">Create your first class above.</div>`}

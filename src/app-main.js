@@ -20,6 +20,7 @@ const TOP = ["home", "topics", "board", "tasks", "profile", "codelab", "library"
 
 BW.go = (name, params = {}) => {
   const prev = BW.route;
+  BW.dropFailed();
   if (prev.name === "code" && name !== "code") BW.leaveCode();
   if (TOP.includes(name)) BW.stack = [];
   else if (!PLAY.includes(prev.name) && !PLAY.includes(name) && prev.name !== name && prev.name !== "auth") BW.stack.push(prev);
@@ -29,6 +30,7 @@ BW.go = (name, params = {}) => {
   BW.route = { name, params };
   BW.render();
   if (name !== prev.name || name === "quiz") window.scrollTo({ top: 0 });
+  if (name === "codelab") (window.requestIdleCallback || setTimeout)(() => BW.py.start().catch(() => { }));   // Python is ready by the time a challenge opens
   if (["home", "tasks", "messages"].includes(name)) BW.refreshStudent?.().then(changed => { if (changed && BW.route.name === name) BW.render(); }).catch(() => { });
 };
 BW.back = () => { BW.route = BW.stack.pop() || { name: "home", params: {} }; BW.render(); window.scrollTo({ top: 0 }); };
@@ -113,13 +115,15 @@ BW.enter = (user, force) => {
   if (!force && entering === user.uid) return; entering = user.uid;
   BW.S.user = { id: user.uid, email: user.email };
   document.getElementById("view").innerHTML = BW.splash("Loading your progress…");
-  BW.loadAll().then(() => { BW.stack = []; BW.route = { name: "home", params: {} }; BW.render(); })
+  BW.withTimeout(BW.loadAll(), 20000).catch(e => { if (["removed_from_school", "no_profile"].includes(e.code)) throw e;
+    const m = document.querySelector(".splash-msg"); if (m) m.textContent = "Reconnecting…";
+    return BW.reconnect().then(() => BW.withTimeout(BW.loadAll(), 20000)); }).then(() => { BW.stack = []; BW.route = { name: "home", params: {} }; BW.render(); })
     .catch(e => { entering = null;
       const removed = e.code === "removed_from_school", missing = e.code === "no_profile";
       document.getElementById("view").innerHTML = `<div class="splash"><h2>${removed ? "This school login has been removed" : missing ? "Your account isn't set up" : "Couldn't load Bitwise"}</h2>
         <p class="muted" style="max-width:46ch">${removed ? "Your school has removed this account. Ask your teacher if you think this is a mistake." : missing ? "Sign-up didn't finish. Sign out and create your account again." : E(BW.errMsg(e))}</p>
         <div class="row-btns">${removed || missing ? "" : `<button class="cta" id="retry">Try again</button>`}<button class="cta ghost" id="so">Sign out</button></div></div>`;
-      document.getElementById("retry")?.addEventListener("click", () => BW.enter(user, true)); document.getElementById("so").onclick = () => BW.api.signOut(); });
+      document.getElementById("retry")?.addEventListener("click", () => BW.reconnect().then(() => BW.enter(user, true))); document.getElementById("so").onclick = () => BW.api.signOut(); });
 };
 BW.auth.onAuthStateChanged(user => setTimeout(() => {
   if (!user) { entering = null; BW.S = BW.freshState(); BW.cache = {}; BW.Q && clearInterval(BW.Q.timer); BW.route = { name: "auth", params: {} }; return BW.render(); }
