@@ -164,7 +164,7 @@ BW.bindCode = (root, { cid, a }) => {
     const R = ide.results; if (!R) return;
     const pass = R.tests.filter(t => t.pass).length + R.req.filter(q => q.ok).length, total = R.tests.length + R.req.length;
     $("testSum").textContent = `${pass}/${total}`; $("testSum").className = pass === total ? "ok" : "";
-    $("tests").innerHTML = `<div class="test-score ${pass === total ? "all" : ""}"><b class="num">${pass}/${total}</b> checks passed${R.saved ? ` · ${E(R.saved)}` : ""}</div>` +
+    $("tests").innerHTML = `<div class="test-score ${pass === total ? "all" : ""}"><b class="num">${pass}/${total}</b> checks passed${R.saved === "saving" ? ` · <span class="saving-inline"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span> Saving…</span>` : R.saved ? ` · <span class="${R.saved.startsWith("Not saved") ? "err-t" : ""}">${E(R.saved)}</span>` : ""}</div>` +
       R.tests.map((r, i) => { const t = c.tests[i];
         return `<div class="test ${r.pass ? "pass" : "fail"}"><span class="tick ${r.pass ? "done" : "no"}">${r.pass ? I.check : I.cross}</span><div class="tt"><b>${t.h ? `Hidden test ${i + 1}` : `Test ${i + 1}`}${t.call ? ` · <code>${E(t.call)}</code>` : ""}</b>
           ${!t.h && t.i?.length ? `<small class="muted">Input: ${E(t.i.join(", "))}</small>` : ""}
@@ -186,24 +186,26 @@ BW.bindCode = (root, { cid, a }) => {
     ide.results = { tests, req };
     const passed = tests.filter(t => t.pass).length + req.filter(q => q.ok).length, total = tests.length + req.length, all = passed === total;
     renderTests(); BW.sfx.play(all ? "win" : "wrong"); if (all) BW.confetti();
-    /* save to the server */
-    const tries = (BW.S.best[key]?.tries || 0) + 1, oldLevel = BW.levelOf(BW.S.profile.xp).L;
+    /* save in the background: the results are already on screen and the buttons work again straight away */
+    busy(false);
+    const R = ide.results, attemptP = ide.attemptP, tries = (BW.S.best[key]?.tries || 0) + 1, oldLevel = BW.levelOf(BW.S.profile.xp).L;
+    ide.attemptP = BW.api.rpc("start_attempt", { p_quiz_id: key, p_assignment: ide.assignment }).catch(() => null);   // ready for the next check
+    R.saved = "saving"; renderTests();
     try {
-      const id = await ide.attemptP; if (!id) throw new Error("not_saved");
+      const id = await attemptP; if (!id) throw new Error("not_saved");
       const res = await BW.api.rpc("finish_attempt", { p_attempt: id, p_total: total, p_correct: passed, p_max_combo: 0, p_active_ms: ide.clock.ms(),
         p_answers: [{ seq: 1, code: "", type: "code", key: "c:" + c.id, text: c.title, topic: "Coding Lab · " + c.section.title, answer: ide.code.slice(0, 20000),
           correct: "Passes all tests", ok: all, try: tries, ms: ide.clock.ms(),
           detail: { tests: tests.map((t, i) => ({ n: i + 1, hidden: !!c.tests[i].h, pass: t.pass, reason: (t.reason || "").slice(0, 200) })), req, runs: ide.runs } }] });
       BW.applyResult(res, key); BW.S.best[key].tries = tries;
       const bn = document.getElementById("bestNote"); if (bn) bn.textContent = BW.bestNote(c);
-      ide.results.saved = res.xp_gain ? `+${res.xp_gain} XP` : all ? "Saved (no extra XP: beat your best score to earn more)" : "Saved";
+      R.saved = res.xp_gain ? `Saved · +${res.xp_gain} XP` : all ? "Saved (beat your best score to earn more XP)" : "Saved";
       (res.badges || []).forEach(k => BW.BADGES[k] && setTimeout(() => BW.toast(`Badge unlocked: ${BW.BADGES[k][0]}`), 700));
       BW.afterWork();
       BW.invalidate("board:");
       if (BW.levelOf(BW.S.profile.xp).L > oldLevel) BW.modal(`<div class="levelup"><div class="ring big" style="--p:100"><i>${BW.levelOf(BW.S.profile.xp).L}</i></div><h2>Level up!</h2><button class="cta" data-close>Keep coding</button></div>`);
-    } catch (e) { ide.results.saved = BW.errMsg(e); }
-    ide.attemptP = BW.api.rpc("start_attempt", { p_quiz_id: key, p_assignment: ide.assignment }).catch(() => null);
-    renderTests(); busy(false);
+    } catch (e) { R.saved = "Not saved: " + BW.errMsg(e); }
+    if (ide.results === R && BW.ide === ide && BW.route.name === "code" && $("tests")) renderTests();
   };
   $("submitBtn").onclick = submit;
 

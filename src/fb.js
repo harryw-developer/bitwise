@@ -35,6 +35,7 @@ const ERRORS = {
   "auth/requires-recent-login": "For your security, sign in again and then retry.",
   "auth/network-request-failed": "Can't reach Bitwise. Check your internet connection.",
   timeout: "This is taking too long. Check your connection and try again.",
+  not_saved: "Couldn't reach Bitwise. Check your connection, then check your code again.",
   unavailable: "Can't reach Bitwise. Check your internet connection.",
   "auth/operation-not-allowed": "Email sign-in isn't switched on for this Bitwise project yet.",
   "auth/configuration-not-found": "Sign-in isn't set up for this Bitwise project yet (Firebase console → Authentication → Get started).",

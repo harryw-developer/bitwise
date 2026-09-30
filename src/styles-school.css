@@ -117,3 +117,5 @@
 .redo-box{border:1px solid #E0B23A;background:color-mix(in srgb,#F2C230 14%,var(--card));border-radius:var(--r-sm);padding:10px 14px;margin:10px 0;display:grid;gap:4px;justify-items:start}
 .redo-box p{margin:0;white-space:pre-wrap}
 .redo-form{border-top:1px solid var(--line);padding-top:12px;margin-top:8px}
+.saving-inline{display:inline-flex;align-items:center;gap:6px}
+.err-t{color:var(--bad)}
