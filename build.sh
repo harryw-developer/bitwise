@@ -25,7 +25,7 @@ JS="src/config.js src/core.js src/fx.js src/gen.js src/data-1.js src/data-2.js s
 if grep -q -e 'solution:' -e '"solution":' "$OUT/app.js"; then echo "ERROR: a model solution leaked into app.js"; exit 1; fi
 
 # 3) Python worker with the marking harness embedded
-{ printf 'const HARNESS = '; python3 -c 'import json,sys;print(json.dumps(open("src/harness.py").read()) + ";")'; cat src/py-worker.js; } > "$OUT/py-worker.js"
+{ printf 'const HARNESS = '; node -e 'console.log(JSON.stringify(require("fs").readFileSync("src/harness.py", "utf8")).replace(/[\u0080-\uffff]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")) + ";")'; cat src/py-worker.js; } > "$OUT/py-worker.js"
 
 CSP="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com; frame-src https://$FB_AUTH_DOMAIN; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 META_CSP=$(printf "%s" "$CSP" | sed "s/; frame-ancestors 'none'//")

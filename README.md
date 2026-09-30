@@ -46,7 +46,8 @@ Other hosts work too:
 2. Host `public/` on any static host:
    - **Netlify**: drag the `public` folder onto app.netlify.com/drop, or connect the repo (`netlify.toml` is included).
    - **Vercel**: `vercel deploy` (`vercel.json` sets the output folder and security headers).
-   - **Cloudflare Pages**: build command `sh build.sh`, output directory `public`.
+   - **Cloudflare (Workers & Pages, connected to the repo)**: in the project's **Settings → Build**, set **Build command** to `sh build.sh` and leave **Deploy command** as `npx wrangler deploy`. `wrangler.jsonc` serves `public/` as static assets (with the headers in `public/_headers`); its `name` must match the project name in Cloudflare. Only Node.js is needed to build.
+   - **Cloudflare Pages (classic)**: build command `sh build.sh`, output directory `public`.
 3. Add your live domain in the Firebase console under **Authentication → Settings → Authorized domains**.
 
 ## Firebase set-up
